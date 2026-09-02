@@ -28,26 +28,29 @@ class LeafViewerChrome {
 
   final ValueNotifier<bool> _visible = ValueNotifier<bool>(true);
   bool _hold = false;
+  bool _disposed = false;
   Timer? _timer;
 
   ValueListenable<bool> get visibleListenable => _visible;
-  bool get visible => _visible.value;
+  bool get visible => !_disposed && _visible.value;
 
-  void toggle() => _visible.value ? hide() : show();
+  void toggle() => visible ? hide() : show();
 
   void show() {
+    if (_disposed) return;
     _visible.value = true;
     _restartTimer();
   }
 
   void hide() {
+    if (_disposed) return;
     _visible.value = false;
     _cancelTimer();
   }
 
   /// While held, the auto-hide timer is suppressed. Releasing restarts it.
   set hold(bool value) {
-    if (_hold == value) return;
+    if (_disposed || _hold == value) return;
     _hold = value;
     value ? _cancelTimer() : _restartTimer();
   }
@@ -64,6 +67,8 @@ class LeafViewerChrome {
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     _cancelTimer();
     _visible.dispose();
   }
