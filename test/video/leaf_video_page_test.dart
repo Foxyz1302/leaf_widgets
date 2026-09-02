@@ -1,0 +1,178 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:leaf_widgets/leaf_widgets.dart';
+
+/// Scripted fake player: records commands, lets tests push stream events.
+class FakeAdapter extends VideoPlayerAdapter {
+  bool failLoad = false;
+  bool disposed = false;
+  bool playing = false;
+
+  final plays = <int>[];
+  final pauses = <int>[];
+
+  final _positionCtrl = StreamController<Duration>.broadcast();
+  final _bufferCtrl = StreamController<Duration>.broadcast();
+  final _playingCtrl = StreamController<bool>.broadcast();
+  final _readyCtrl = StreamController<void>.broadcast();
+  final _errorCtrl = StreamController<Object>.broadcast();
+
+  @override
+  Widget get surface => const ColoredBox(color: Color(0xFF332211));
+
+  @override
+  Future<void> load({required String url, Map<String, String>? headers}) async {
+    if (failLoad) throw Exception('load failed');
+  }
+
+  void emitPlaying(bool value) {
+    playing = value;
+    _playingCtrl.add(value);
+  }
+
+  void emitReady() => _readyCtrl.add(null);
+
+  @override
+  Stream<Duration> get positionStream => _positionCtrl.stream;
+  @override
+  Stream<Duration> get bufferStream => _bufferCtrl.stream;
+  @override
+  Stream<bool> get playingStream => _playingCtrl.stream;
+  @override
+  Stream<void> get readyStream => _readyCtrl.stream;
+  @override
+  Stream<Object> get errorStream => _errorCtrl.stream;
+
+  @override
+  Duration get position => Duration.zero;
+  @override
+  Duration get duration => const Duration(seconds: 60);
+  @override
+  Duration get buffer => Duration.zero;
+  @override
+  bool get isPlaying => playing;
+
+  @override
+  void play() {
+    playing = true;
+    plays.add(plays.length);
+  }
+  @override
+  void pause() {
+    playing = false;
+    pauses.add(pauses.length);
+  }
+  @override
+  void playOrPause() => playing ? pause() : play();
+  @override
+  void seek(Duration target) {}
+  @override
+  void dispose() => disposed = true;
+}
+
+void main() {
+  late PageController controller;
+  final adapters = <int, FakeAdapter>{};
+  BuildContext? pageContext;
+
+  Widget harness({required int pageCount, bool enableChrome = false, Map<int, FakeAdapter> inject = const {}}) {
+    adapters.clear();
+    pageContext = null;
+    controller = PageController();
+    return MaterialApp(
+      home: Scaffold(
+        body: LeafViewer(
+          pageCount: pageCount,
+          enableChrome: enableChrome,
+          pageController: controller,
+          pageBuilder: (context, i) {
+            pageContext ??= context;
+            final adapter = adapters.putIfAbsent(i, () => inject[i] ?? FakeAdapter());
+            return LeafVideoPage(
+              key: ValueKey(i),
+              createAdapter: () => adapter,
+              url: 'https://example.com/$i.mp4',
+              thumbnail: Text('thumb $i'),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  testWidgets('neighbour pages buffer but stay silent; settled page plays', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 2));
+    await tester.pumpAndSettle();
+
+    expect(adapters[0]!.plays.length, 1);
+    expect(adapters[1], isNotNull);
+    expect(adapters[1]!.plays, isEmpty);
+  });
+
+  testWidgets('swiping pauses the old page and plays the new one; swiping back resumes', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 2));
+    await tester.pumpAndSettle();
+    expect(adapters[0]!.plays.length, 1);
+
+    controller.jumpToPage(1);
+    await tester.pumpAndSettle();
+    expect(adapters[0]!.playing, isFalse);
+    expect(adapters[1]!.playing, isTrue);
+
+    controller.jumpToPage(0);
+    await tester.pumpAndSettle();
+    expect(adapters[1]!.playing, isFalse);
+    expect(adapters[0]!.playing, isTrue);
+  });
+
+  testWidgets('ready event drops the thumbnail', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('thumb 0'), findsOneWidget);
+
+    adapters[0]!.emitReady();
+    await tester.pumpAndSettle();
+    expect(find.text('thumb 0'), findsNothing);
+  });
+
+  testWidgets('load failure shows retry UI; retry reloads and plays', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, inject: {0: FakeAdapter()..failLoad = true}));
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsOneWidget);
+
+    adapters[0]!.failLoad = false;
+    await tester.tap(find.text('Tap to retry'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsNothing);
+    expect(adapters[0]!.plays.length, 1);
+  });
+
+  testWidgets('chrome policy: pause shows and holds chrome, playing releases the hold', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, enableChrome: true));
+    await tester.pumpAndSettle();
+    final chrome = LeafViewer.chromeOf(pageContext!)!;
+
+    adapters[0]!.emitPlaying(true);
+    await tester.pump();
+
+    adapters[0]!.emitPlaying(false);
+    await tester.pumpAndSettle();
+    expect(chrome.visible, isTrue);
+    await tester.pump(const Duration(seconds: 4));
+    expect(chrome.visible, isTrue, reason: 'paused video must hold chrome up');
+
+    adapters[0]!.emitPlaying(true);
+    await tester.pump(const Duration(seconds: 4));
+    expect(chrome.visible, isFalse, reason: 'playing releases the hold; timer hides chrome');
+  });
+
+  testWidgets('disposing the page disposes the adapter', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(adapters[0]!.disposed, isTrue);
+  });
+}
