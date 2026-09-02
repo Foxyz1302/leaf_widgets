@@ -109,17 +109,24 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
               onDoubleTap: _handleDoubleTap,
             ),
           ),
-          // Bottom bar — fades with the viewer's chrome state.
+          // Bottom bar — fades with the viewer's chrome state. Bottom-anchored
+          // with its natural height: inside a StackFit.expand stack a bare
+          // child stretches full-screen and eats every gesture meant for the
+          // tap detector above it.
           if (chrome != null)
             ValueListenableBuilder<bool>(
               valueListenable: chrome.visibleListenable,
               builder: (context, visible, _) => IgnorePointer(
                 ignoring: !visible,
-                child: AnimatedOpacity(duration: const Duration(milliseconds: 200), opacity: visible ? 1.0 : 0.0, child: _buildBar(context)),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: visible ? 1.0 : 0.0,
+                  child: Align(alignment: Alignment.bottomCenter, child: SafeArea(child: _buildBar(context))),
+                ),
               ),
             )
           else
-            _buildBar(context),
+            Align(alignment: Alignment.bottomCenter, child: SafeArea(child: _buildBar(context))),
           // Center play badge while paused.
           Center(
             child: IgnorePointer(
@@ -175,6 +182,7 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
       ),
       padding: const EdgeInsets.all(10),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           const SizedBox(height: 50),
           Row(

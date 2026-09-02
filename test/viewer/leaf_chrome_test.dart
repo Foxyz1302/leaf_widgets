@@ -141,6 +141,42 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
   });
+
+  group('LeafViewerHero', () {
+    testWidgets('only the settled page registers a hero', (tester) async {
+      final controller = PageController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafViewer(
+            pageCount: 3,
+            pageController: controller,
+            pageBuilder: (context, i) =>
+                LeafViewerHero(tag: 'post_$i', child: SizedBox.expand(key: ValueKey('page-$i'))),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      // Neighbours are alive but must not carry heroes.
+      expect(find.byType(Hero), findsOneWidget);
+      expect(find.byKey(const ValueKey('page-0')), findsOneWidget);
+
+      controller.jumpToPage(1);
+      await tester.pumpAndSettle();
+      expect(find.byType(Hero), findsOneWidget);
+      expect(tester.widget<Hero>(find.byType(Hero)).tag, 'post_1');
+    });
+
+    testWidgets('behaves like a plain hero outside a viewer', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafViewerHero(tag: 'x', child: const SizedBox.expand()),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byType(Hero), findsOneWidget);
+    });
+  });
 }
 
 String chromeState(BuildContext context) {
