@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/rendering.dart' show RenderViewportBase;
 import 'package:flutter/services.dart';
 
 import 'leaf_viewer_internal.dart';
+import 'leaf_chrome.dart';
 import 'leaf_zoom_controller.dart';
 
 /// Fullscreen pager with per-page zoom, boundary-aware edge release and a
@@ -46,6 +48,8 @@ class LeafViewer extends StatefulWidget {
     this.controlsBuilder,
     this.enableSwipeGestures,
     this.enableKeyboard = true,
+    this.enableChrome = false,
+    this.showPageCounter = true,
   });
 
   final int pageCount;
@@ -75,9 +79,29 @@ class LeafViewer extends StatefulWidget {
   /// paging and Esc for dismissal (default true).
   final bool enableKeyboard;
 
+  /// Opt-in chrome reveal: when true the viewer owns a [LeafViewerChrome]
+  /// (reachable via [chromeOf]) whose visibility tap-toggles on the media and
+  /// drives every [LeafChrome] layer plus the paging chrome below. Auto-hide
+  /// applies on touch platforms only; on desktop chrome hides on tap only.
+  final bool enableChrome;
+
+  /// Whether the default control set shows the "current / total" counter.
+  /// Meaningless with huge page counts — turn off there.
+  final bool showPageCounter;
+
   /// The zoom controller of the currently active page, if any.
   static LeafZoomController? controllerOf(BuildContext context) {
     return LeafViewerScope.maybeOf(context)?.registry.activeController;
+  }
+
+  /// Reactive index of the currently settled page, if inside a viewer.
+  static ValueListenable<int>? currentIndexListOf(BuildContext context) {
+    return LeafViewerScope.maybeOf(context)?.currentIndex;
+  }
+
+  /// The viewer's chrome reveal controller, if inside a chrome-enabled viewer.
+  static LeafViewerChrome? chromeOf(BuildContext context) {
+    return LeafViewerScope.maybeOf(context)?.chrome;
   }
 
   @override
@@ -108,6 +132,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
   int _currentIndex = 0;
   bool _dismissing = false;
   Size _viewerSize = Size.zero;
+  LeafViewerChrome? _chrome;
 
   LeafZoomController? get _activeController => _controllers[_currentIndex];
 
@@ -151,6 +176,9 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
       ..addListener(() {
         if (mounted) setState(() {});
       });
+    if (widget.enableChrome) {
+      _chrome = LeafViewerChrome(autoHide: !leafIsDesktopPlatform());
+    }
   }
 
   @override
@@ -158,6 +186,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _focusNode.dispose();
     _dismissCtrl.dispose();
     _indexNotifier.dispose();
+    _chrome?.dispose();
     if (widget.pageController == null) _pageController.dispose();
     super.dispose();
   }
@@ -256,6 +285,21 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     });
   }
 
+  // ── Chrome reveal ────────────────────────────────────────────────────────
+
+  /// Wraps the viewer's paging chrome in the chrome reveal, when chrome is on.
+  Widget _chromeRevealed(Widget child) {
+    final chrome = _chrome;
+    if (chrome == null) return child;
+    return ValueListenableBuilder<bool>(
+      valueListenable: chrome.visibleListenable,
+      builder: (context, visible, _) => IgnorePointer(
+        ignoring: !visible,
+        child: AnimatedOpacity(duration: const Duration(milliseconds: 200), opacity: visible ? 1.0 : 0.0, child: child),
+      ),
+    );
+  }
+
   // ── Build ───────────────────────────────────────────────────────────────
 
   @override
@@ -271,6 +315,8 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
       onKeyEvent: widget.enableKeyboard ? _onKeyEvent : null,
       child: LeafViewerScope(
         registry: this,
+        currentIndex: _indexNotifier,
+        chrome: _chrome,
         child: LayoutBuilder(
           builder: (context, constraints) {
             _viewerSize = constraints.biggest;
@@ -319,18 +365,24 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
                   ),
                 ),
                 if (widget.controlsBuilder != null)
-                  ValueListenableBuilder<int>(
-                    valueListenable: _indexNotifier,
-                    builder: (context, index, _) => widget.controlsBuilder!(
-                      context,
-                      LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
+                  _chromeRevealed(
+                    ValueListenableBuilder<int>(
+                      valueListenable: _indexNotifier,
+                      builder: (context, index, _) => widget.controlsBuilder!(
+                        context,
+                        LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
+                      ),
                     ),
                   )
                 else if (desktop)
-                  ValueListenableBuilder<int>(
-                    valueListenable: _indexNotifier,
-                    builder: (context, index, _) =>
-                        _LeafViewerDefaultControls(controls: LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage)),
+                  _chromeRevealed(
+                    ValueListenableBuilder<int>(
+                      valueListenable: _indexNotifier,
+                      builder: (context, index, _) => _LeafViewerDefaultControls(
+                        controls: LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
+                        showPageCounter: widget.showPageCounter,
+                      ),
+                    ),
                   ),
               ],
             );
@@ -342,9 +394,10 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 }
 
 class _LeafViewerDefaultControls extends StatelessWidget {
-  const _LeafViewerDefaultControls({required this.controls});
+  const _LeafViewerDefaultControls({required this.controls, this.showPageCounter = true});
 
   final LeafViewerControls controls;
+  final bool showPageCounter;
 
   @override
   Widget build(BuildContext context) {
@@ -377,18 +430,19 @@ class _LeafViewerDefaultControls extends StatelessWidget {
           right: 8,
           child: _ControlButton(icon: Icons.close, onTap: () => Navigator.maybePop(context)),
         ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 16,
-          child: IgnorePointer(
-            child: Text(
-              '${controls.currentIndex + 1} / ${controls.pageCount}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70, fontSize: 14, fontFeatures: [FontFeature.tabularFigures()]),
+        if (showPageCounter)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: IgnorePointer(
+              child: Text(
+                '${controls.currentIndex + 1} / ${controls.pageCount}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70, fontSize: 14, fontFeatures: [FontFeature.tabularFigures()]),
+              ),
             ),
           ),
-        ),
       ],
     );
   }

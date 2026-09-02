@@ -227,6 +227,17 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
                 (instance) => instance.onDoubleTapDown = (details) => _controller.doubleTap(details.localPosition),
               );
             }
+            // Chrome-enabled viewers: single tap toggles chrome. Registered on
+            // THIS detector so the tap/double-tap arena coordination holds —
+            // a cross-detector tap would fire on the first tap of every
+            // double-tap-zoom.
+            final chrome = LeafViewerScope.maybeOf(context)?.chrome;
+            if (chrome != null) {
+              gestures[TapGestureRecognizer] = GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+                () => TapGestureRecognizer(debugOwner: this),
+                (instance) => instance.onTap = chrome.toggle,
+              );
+            }
             return Listener(
               onPointerSignal: _onPointerSignal,
               child: RawGestureDetector(
