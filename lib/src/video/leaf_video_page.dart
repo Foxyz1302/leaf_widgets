@@ -68,7 +68,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   bool _ready = false;
 
   bool _active = true;
-  bool _obscured = false;
+  bool _coveredByRoute = false;
   bool _backgrounded = false;
   bool _wasCovered = false;
   bool _wasPlayingBeforeCover = false;
@@ -76,7 +76,6 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   LeafViewerChrome? _chrome;
   int? _pageIndex;
   ValueListenable<int>? _currentIndex;
-  Animation<double>? _routeAnimation;
   final _subs = <StreamSubscription<void>>[];
 
   @override
@@ -106,7 +105,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     }
     if (!mounted) return;
     setState(() => _loaded = true);
-    if (_active && !_obscured && !_backgrounded) _adapter.play();
+    if (_active && !_coveredByRoute && !_backgrounded) _adapter.play();
   }
 
   @override
@@ -123,14 +122,14 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
       _evaluateActive();
     }
 
+    // "Something is pushed on top of me" — sheets, pages, dialogs, anything.
+    // Route.isCurrent is the only reliable signal: a route's secondaryAnimation
+    // is not driven by bottom sheets (ModalBottomSheetRoute.canTransitionFrom
+    // only accepts other sheets), so status listeners on it stay silent for
+    // the most common cover in gallery apps. _ModalScopeStatus notifies on
+    // isCurrent changes, so this re-runs from didChangeDependencies.
     final route = ModalRoute.of(context);
-    final animation = route?.secondaryAnimation;
-    if (!identical(animation, _routeAnimation)) {
-      _routeAnimation?.removeStatusListener(_onRouteStatus);
-      _routeAnimation = animation;
-      _routeAnimation?.addStatusListener(_onRouteStatus);
-      _setObscured(_routeAnimation?.status != null && _routeAnimation!.status != AnimationStatus.dismissed);
-    }
+    _setCoveredByRoute(route != null && !route.isCurrent);
   }
 
   @override
@@ -151,13 +150,9 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     _updateCovered();
   }
 
-  void _onRouteStatus(AnimationStatus status) {
-    _setObscured(status != AnimationStatus.dismissed);
-  }
-
-  void _setObscured(bool obscured) {
-    if (_obscured == obscured) return;
-    _obscured = obscured;
+  void _setCoveredByRoute(bool covered) {
+    if (_coveredByRoute == covered) return;
+    _coveredByRoute = covered;
     _updateCovered();
   }
 
@@ -173,13 +168,13 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
       // owns it from here.
       _chrome?.hold = false;
       _adapter.pause();
-    } else if (_loaded && !_failed && !_obscured && !_backgrounded) {
+    } else if (_loaded && !_failed && !_coveredByRoute && !_backgrounded) {
       _adapter.play();
     }
   }
 
   void _updateCovered() {
-    final covered = _obscured || _backgrounded;
+    final covered = _coveredByRoute || _backgrounded;
     if (covered) {
       if (_wasCovered) return;
       _wasPlayingBeforeCover = _adapter.isPlaying;
@@ -214,7 +209,6 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
       sub.cancel();
     }
     _currentIndex?.removeListener(_onIndexChanged);
-    _routeAnimation?.removeStatusListener(_onRouteStatus);
     WidgetsBinding.instance.removeObserver(this);
     _adapter.dispose();
     super.dispose();

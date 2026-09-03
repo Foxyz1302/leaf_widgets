@@ -192,7 +192,9 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
                 stream: widget.adapter.positionStream,
                 builder: (context, _) => Text(
                   '${_formatDuration(widget.adapter.position)} / ${_formatDuration(widget.adapter.duration)}',
-                  style: const TextStyle(fontSize: 12),
+                  // Tabular digits: every-second width jitter would resize the
+                  // scrubber next to it.
+                  style: const TextStyle(fontSize: 12, fontFeatures: [FontFeature.tabularFigures()]),
                 ),
               ),
               if (widget.onFullscreenToggle != null) IconButton(icon: const Icon(Icons.fullscreen), onPressed: widget.onFullscreenToggle),
