@@ -37,3 +37,12 @@ abstract class VideoPlayerAdapter {
   /// Releases the underlying player. The adapter is unusable afterwards.
   void dispose();
 }
+
+/// Optional volume control. Adapters that can report and set output volume
+/// implement this; controls show the volume UI only when present, so players
+/// without volume support (or platforms where the system owns it) stay clean.
+abstract mixin class HasVolume {
+  Stream<double> get volumeStream;
+  double get volume;
+  void setVolume(double volume);
+}

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../viewer/leaf_chrome.dart';
 import '../viewer/leaf_viewer.dart';
 import '../viewer/leaf_viewer_internal.dart';
+import 'leaf_desktop_video_controls.dart';
 import 'leaf_video_adapter.dart';
 import 'leaf_video_controls.dart';
 
@@ -49,7 +50,8 @@ class LeafVideoPage extends StatefulWidget {
   /// Shown until [VideoPlayerAdapter.readyStream] fires.
   final Widget? thumbnail;
 
-  /// Defaults to [LeafVideoControls].
+  /// Defaults to [LeafVideoControls] on mobile, [LeafDesktopVideoControls]
+  /// on desktop.
   final Widget Function(BuildContext context, VideoPlayerAdapter adapter)? controlsBuilder;
   final Duration skipDuration;
 
@@ -221,7 +223,9 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     final thumbnail = widget.thumbnail;
     final controls =
         widget.controlsBuilder?.call(context, _adapter) ??
-        LeafVideoControls(adapter: _adapter, skipDuration: widget.skipDuration, onFullscreenToggle: widget.onFullscreenToggle);
+        (leafIsDesktopPlatform()
+            ? LeafDesktopVideoControls(adapter: _adapter, onFullscreenToggle: widget.onFullscreenToggle)
+            : LeafVideoControls(adapter: _adapter, skipDuration: widget.skipDuration, onFullscreenToggle: widget.onFullscreenToggle));
 
     return Stack(
       fit: StackFit.expand,

@@ -31,6 +31,8 @@ class LeafZoomable extends StatefulWidget {
     this.originalSize,
     this.maxScale = 5.0,
     this.enabled = true,
+    this.onTap,
+    this.onZoomChanged,
   }) : image = null;
 
   const LeafZoomable.image({
@@ -38,6 +40,8 @@ class LeafZoomable extends StatefulWidget {
     required Image image,
     this.maxScale = 5.0,
     this.enabled = true,
+    this.onTap,
+    this.onZoomChanged,
   })  : child = image,
         childSize = null,
         originalSize = null,
@@ -53,6 +57,8 @@ class LeafZoomable extends StatefulWidget {
 
   final double maxScale;
   final bool enabled;
+  final VoidCallback? onTap;
+  final ValueChanged<bool>? onZoomChanged;
 
   /// The contained (letterboxed) size of [source] inside [viewport].
   static Size containSize(Size viewport, Size source) {
@@ -78,12 +84,22 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
   ImageStreamListener? _imageListener;
   Size? _decodedSize;
   bool _imageResolved = false;
+  bool _lastZoomed = false;
+
+  void _notifyZoom() {
+    final zoomed = _controller.zoomed;
+    if (zoomed == _lastZoomed) return;
+    _lastZoomed = zoomed;
+    widget.onZoomChanged?.call(zoomed);
+  }
 
   @override
   void initState() {
     super.initState();
     _controller = LeafZoomController(maxScale: widget.maxScale, vsync: this)
       ..onZoomLimit = () => HapticFeedback.mediumImpact();
+    _lastZoomed = _controller.zoomed;
+    _controller.addListener(_notifyZoom);
   }
 
   @override
@@ -150,6 +166,7 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
       _imageStream!.removeListener(_imageListener!);
     }
     _unregister();
+    _controller.removeListener(_notifyZoom);
     _controller.dispose();
     super.dispose();
   }
@@ -221,21 +238,18 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
                   ..onEnd = _onScaleEnd,
               ),
             };
-            if (LeafViewerScope.maybeOf(context)?.registry.swipeGesturesEnabled ?? false) {
+            if (LeafViewerScope.maybeOf(context)?.registry.swipeGesturesEnabled ?? true) {
               gestures[DoubleTapGestureRecognizer] = GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
                 () => DoubleTapGestureRecognizer(debugOwner: this),
                 (instance) => instance.onDoubleTapDown = (details) => _controller.doubleTap(details.localPosition),
               );
             }
-            // Chrome-enabled viewers: single tap toggles chrome. Registered on
-            // THIS detector so the tap/double-tap arena coordination holds —
-            // a cross-detector tap would fire on the first tap of every
-            // double-tap-zoom.
             final chrome = LeafViewerScope.maybeOf(context)?.chrome;
-            if (chrome != null) {
+            final tapCallback = widget.onTap ?? chrome?.toggle;
+            if (tapCallback != null) {
               gestures[TapGestureRecognizer] = GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
                 () => TapGestureRecognizer(debugOwner: this),
-                (instance) => instance.onTap = chrome.toggle,
+                (instance) => instance.onTap = tapCallback,
               );
             }
             return Listener(

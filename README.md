@@ -128,3 +128,45 @@ LeafViewer(
 - All viewer code lives in `lib/src/viewer/` — zoom math in
   `leaf_zoom_controller.dart` (property-tested), gesture arbitration in
   `leaf_pan_zoom_recognizer.dart` (ported from photo_view, MIT).
+
+## Video
+
+Player-agnostic video kit — the app picks an engine by implementing one
+~80-line adapter; page, lifecycle, and controls come free.
+
+- `VideoPlayerAdapter` (`lib/src/video/leaf_video_adapter.dart`) — the only
+  seam: `surface`, `load(url, headers)`, play/pause/seek, position/buffer/
+  playing/ready/error streams + sync getters, `dispose()`. Implementations
+  live outside this package so it stays dependency-free. The `HasVolume`
+  mixin adds volume for adapters that support it; controls show volume UI
+  only then.
+- `LeafVideoPage` — owns the full lifecycle: neighbor pages preload paused,
+  settled page autoplays, route-cover/background pause with
+  resume-if-was-playing, error/retry, thumbnail until `readyStream`. Works
+  standalone (always-active, permanent controls), but single-active gating
+  needs a `LeafViewer` ancestor. `controlsBuilder` defaults to touch
+  controls on mobile, desktop controls on desktop.
+- `LeafVideoControls` — touch-first: double-tap thirds seek, tap toggles
+  chrome, scrubber + time + fullscreen slot.
+- `LeafDesktopVideoControls` — click toggles (immediate `onTapDown`, since
+  `onTap` would wait out the double-tap timeout on every click),
+  double-click fullscreen, self-hiding bar + cursor, hover time bubble,
+  volume slider when `HasVolume`.
+- `LeafScrubber` — shared scrubber (buffer/position tracks, tap-to-seek,
+  drag-to-scrub, optional knob + hover preview); public for custom bars.
+- `VideoLifecycleGuard` — background + route-cover pause for custom viewers
+  that don't use `LeafVideoPage`. Callback-driven (`isPlaying`/`onPause`/
+  `onResume`, `onResume` nullable for pause-only consumers). Cover detection
+  via `ModalRoute.isCurrent` (no `RouteObserver` needed); callbacks fire
+  post-frame so they may call ancestor `setState`.
+- `FirstFrameGate` — caps concurrent first-frame decodes across feed tiles
+  (default 2). `await enter()` before opening media, `exit()` on frame,
+  playback start, or dispose. Pure logic, headless-tested.
+
+Thumbnail is always app-provided (`thumbnail:` slot) — BlurHash, API
+preview, or nothing (spinner). Volume persistence, engine toggles, and the
+concrete adapters are app-side (see `video_adapter_media_kit`).
+
+Tests: `test/video/` runs fake-adapter widget tests (gating, retry,
+thumbnail-drop, cover flow, guard, desktop controls, gate). Fake-timer
+note: pump a duration after taps — gesture deadlines don't advance alone.
