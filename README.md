@@ -11,7 +11,7 @@ Leaf UI widgets — zero external dependencies.
   `LeafZoomable.image`.
 - `LeafZoomController` — the zoom/pan state machine behind both (clamped,
   fling, double-tap staging, wheel zoom).
-- Plus: `LeafContextMenu`, `LeafPopover`, `LeafImage`, `AnimatedFavoriteButton`,
+- Plus: `LeafContextMenu`, `LeafPopover`, `LeafToasts`, `LeafImage`, `AnimatedFavoriteButton`,
   `AnimatedStar`.
 
 ## Features
@@ -121,6 +121,26 @@ LeafViewer(
   unless `enableSwipeGestures: true` forces them on.
 - `scrollDirection` flips paging to vertical; the dismiss gesture then runs
   along the other axis.
+
+## Toasts
+
+`LeafToastController` holds the toasts; `LeafToastHost` shows them in a corner over the app. Each slides and fades
+in from the side, stays for its duration, then slides out while the gap closes. Plain toasts let clicks through;
+ones with `onTap` take the click and dismiss. The app keeps the policy (what deserves a toast).
+
+```dart
+final toasts = LeafToastController();
+
+MaterialApp(
+  builder: (context, child) => LeafToastHost(controller: toasts, alignment: Alignment.bottomLeft, child: child!),
+  home: const HomePage(),
+);
+
+toasts.show('Load order sorted', leading: const LeafToastIcon(Icons.sort));
+toasts.show('Bob: hi', title: 'Chat', duration: null, onTap: openChat); // stays until clicked or dismissed
+```
+
+`maxVisible`, `spacing`, `padding`, `animationDuration`, `curve` and `cardBuilder` (default `LeafToastCard`) tune it.
 
 ## Additional information
 

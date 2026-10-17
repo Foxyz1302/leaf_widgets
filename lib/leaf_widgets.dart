@@ -7,6 +7,7 @@ export 'src/misc/animated_favorite_button.dart';
 export 'src/misc/animated_star.dart';
 export 'src/misc/leaf_async_chip.dart';
 export 'src/popover/leaf_popover.dart';
+export 'src/toast/leaf_toasts.dart';
 export 'src/video/leaf_desktop_video_controls.dart';
 export 'src/video/first_frame_gate.dart';
 export 'src/video/leaf_scrubber.dart';
