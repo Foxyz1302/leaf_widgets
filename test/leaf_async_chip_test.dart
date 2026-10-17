@@ -96,4 +96,23 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 1200));
   });
+
+  testWidgets('resultLabel turns the result into the done label', (tester) async {
+    final key = GlobalKey<LeafAsyncChipState>();
+    await tester.pumpWidget(_host(LeafAsyncChip(key: key, child: const SizedBox(width: 40, height: 20))));
+    key.currentState!.run(task: (_) async => 12, resultLabel: (n) => '$n moved');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('12 moved'), findsOneWidget);
+  });
+
+  testWidgets('a pill wider than the child does not resize it', (tester) async {
+    final key = GlobalKey<LeafAsyncChipState>();
+    await tester.pumpWidget(_host(LeafAsyncChip(key: key, child: const SizedBox(width: 40, height: 20))));
+    final before = tester.getSize(find.byType(LeafAsyncChip));
+    key.currentState!.run(task: (_) async {}, doneLabel: 'A much longer label than the child');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.getSize(find.byType(LeafAsyncChip)), before);
+  });
 }

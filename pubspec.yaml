@@ -1,6 +1,6 @@
 name: leaf_widgets
 description: "Leaf UI widgets: fullscreen page viewer, context menu, popover, toasts, image widget, animated star/favorite. Zero external dependencies."
-version: 0.2.0
+version: 0.2.1
 publish_to: 'none'
 
 environment:

@@ -66,10 +66,12 @@ class LeafAsyncChipState extends State<LeafAsyncChip> {
 
   /// Runs [task], showing the running → done/error overlay. Ignores the call
   /// while a task is already running. [doneLabel] overrides the widget's
-  /// default label for this run.
-  Future<void> run({
-    required Future<void> Function(ValueChanged<double>? onProgress) task,
+  /// default label for this run; [resultLabel] turns the task's result into
+  /// the label instead ("12 moved"), when it returns a non-empty string.
+  Future<void> run<T>({
+    required Future<T> Function(ValueChanged<double>? onProgress) task,
     String? doneLabel,
+    String? Function(T result)? resultLabel,
   }) async {
     if (_status == LeafAsyncStatus.running) return;
     _timer?.cancel();
@@ -79,11 +81,14 @@ class LeafAsyncChipState extends State<LeafAsyncChip> {
       _doneLabel = doneLabel ?? widget.doneLabel;
     });
     try {
-      await task((p) {
+      final result = await task((p) {
         if (mounted) setState(() => _progress = p.clamp(0.0, 1.0));
       });
       if (!mounted) return;
-      setState(() => _status = LeafAsyncStatus.done);
+      setState(() {
+        _status = LeafAsyncStatus.done;
+        if (resultLabel?.call(result) case final label? when label.isNotEmpty) _doneLabel = label;
+      });
       _timer = Timer(widget.doneDuration, _reset);
     } catch (e, st) {
       debugPrint('LeafAsyncChip: task failed: $e\n$st');
@@ -100,24 +105,34 @@ class LeafAsyncChipState extends State<LeafAsyncChip> {
 
   @override
   Widget build(BuildContext context) {
+    // The pill floats over the child without taking part in layout: a label wider than the child (a small button)
+    // overflows it instead of resizing it and nudging the surrounding layout.
     return Stack(
       alignment: Alignment.center,
+      clipBehavior: Clip.none,
       children: [
         widget.child,
         if (_status != LeafAsyncStatus.idle)
-          IgnorePointer(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              transitionBuilder: (child, anim) => FadeTransition(
-                opacity: anim,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.6, end: 1.0).animate(
-                    CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: OverflowBox(
+                maxWidth: double.infinity,
+                maxHeight: double.infinity,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  transitionBuilder: (child, anim) => FadeTransition(
+                    opacity: anim,
+                    child: ScaleTransition(
+                      scale: Tween<double>(
+                        begin: 0.6,
+                        end: 1.0,
+                      ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
+                      child: child,
+                    ),
                   ),
-                  child: child,
+                  child: _Pill(key: ValueKey(_status), status: _status, progress: _progress, label: _label),
                 ),
               ),
-              child: _Pill(key: ValueKey(_status), status: _status, progress: _progress, label: _label),
             ),
           ),
       ],
@@ -125,11 +140,11 @@ class LeafAsyncChipState extends State<LeafAsyncChip> {
   }
 
   String get _label => switch (_status) {
-        LeafAsyncStatus.running => widget.runningLabel,
-        LeafAsyncStatus.done => _doneLabel,
-        LeafAsyncStatus.error => widget.errorLabel,
-        LeafAsyncStatus.idle => '',
-      };
+    LeafAsyncStatus.running => widget.runningLabel,
+    LeafAsyncStatus.done => _doneLabel,
+    LeafAsyncStatus.error => widget.errorLabel,
+    LeafAsyncStatus.idle => '',
+  };
 }
 
 class _Pill extends StatelessWidget {
@@ -143,23 +158,16 @@ class _Pill extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.75),
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.75), borderRadius: BorderRadius.circular(20)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           switch (status) {
             LeafAsyncStatus.running => SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  value: progress,
-                  color: Colors.white,
-                ),
-              ),
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, value: progress, color: Colors.white),
+            ),
             LeafAsyncStatus.done => const Icon(Icons.check, size: 16, color: Color(0xFF7CF29C)),
             LeafAsyncStatus.error => const Icon(Icons.error_outline, size: 16, color: Color(0xFFFF6B6B)),
             LeafAsyncStatus.idle => const SizedBox.shrink(),
