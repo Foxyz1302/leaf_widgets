@@ -9,6 +9,7 @@ import 'package:leaf_widgets/leaf_widgets.dart';
 class FakeAdapter extends VideoPlayerAdapter {
   bool playing = false;
   bool disposed = false;
+  Duration currentPosition = Duration.zero;
 
   final _positionCtrl = StreamController<Duration>.broadcast();
   final _bufferCtrl = StreamController<Duration>.broadcast();
@@ -27,6 +28,11 @@ class FakeAdapter extends VideoPlayerAdapter {
     _playingCtrl.add(value);
   }
 
+  void emitPosition(Duration value) {
+    currentPosition = value;
+    _positionCtrl.add(value);
+  }
+
   @override
   Stream<Duration> get positionStream => _positionCtrl.stream;
   @override
@@ -39,7 +45,7 @@ class FakeAdapter extends VideoPlayerAdapter {
   Stream<Object> get errorStream => _errorCtrl.stream;
 
   @override
-  Duration get position => Duration.zero;
+  Duration get position => currentPosition;
   @override
   Duration get duration => const Duration(seconds: 60);
   @override
@@ -130,6 +136,26 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 600));
     expect(barOf(tester).opacity, 0.0);
+  });
+
+  testWidgets('hidden bar is dropped after its fade-out: nothing ticks while playing, back on activity', (tester) async {
+    final adapter = FakeAdapter()..playing = true;
+    await tester.pumpWidget(harness(adapter));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    expect(barOf(tester).opacity, 0.0);
+    expect(find.byType(LeafScrubber), findsNothing);
+
+    adapter.emitPosition(const Duration(seconds: 2));
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.moveTo(const Offset(400, 300));
+    await tester.pump();
+    expect(barOf(tester).opacity, 1.0);
+    expect(find.byType(LeafScrubber), findsOneWidget);
   });
 
   testWidgets('volume UI only with HasVolume; mute toggles', (tester) async {
