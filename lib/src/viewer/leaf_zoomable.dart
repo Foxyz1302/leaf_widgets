@@ -150,9 +150,9 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
     final image = widget.image!;
     final stream = image.image.resolve(createLocalImageConfiguration(context));
     final listener = ImageStreamListener((info, _) {
-      if (!mounted) return;
       final size = Size(info.image.width.toDouble(), info.image.height.toDouble());
-      if (size == _decodedSize) return;
+      info.dispose();
+      if (!mounted || size == _decodedSize) return;
       setState(() => _decodedSize = size);
     });
     stream.addListener(listener);

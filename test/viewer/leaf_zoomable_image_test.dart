@@ -61,4 +61,14 @@ void main() {
     expect(zoomableRebuilds, 0);
     await _unmount(tester);
   });
+
+  testWidgets('LeafZoomable.image releases the frames it inspects', (tester) async {
+    final frame = (await tester.runAsync(() => createTestImage(width: 320, height: 240, cache: false)))!;
+    await tester.pumpWidget(MaterialApp(home: LeafZoomable.image(image: Image(image: _AnimatedImage(frame)))));
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(frame.debugGetOpenHandleStackTraces()!.length, lessThan(6));
+    await _unmount(tester);
+  });
 }
