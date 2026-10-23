@@ -65,6 +65,35 @@ void main() {
     imageCache.clear();
   });
 
+  testWidgets('GradientRevealAnimation.curve shapes the sweep', (tester) async {
+    final image = (await tester.runAsync(() {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawRect(const Rect.fromLTWH(0, 0, 40, 30), Paint()..color = const Color(0xFFFF0000));
+      return recorder.endRecording().toImage(40, 30);
+    }))!;
+    final boundary = GlobalKey();
+    await tester.pumpWidget(Center(
+      child: RepaintBoundary(
+        key: boundary,
+        child: LeafImage(
+          image: _DelayedImage(image),
+          width: 40,
+          height: 30,
+          revealAnimation: const GradientRevealAnimation(curve: Threshold(0.9)),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    final pixels = (await tester.runAsync(() async {
+      final shot = await (boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary).toImage();
+      return shot.toByteData(format: ui.ImageByteFormat.rawRgba);
+    }))!;
+    expect(pixels.getUint8((15 * 40 + 2) * 4 + 3), 0);
+    imageCache.clear();
+  });
+
   testWidgets('rebuilding the built-in reveals leaves no status listeners behind', (tester) async {
     final controller = _CountingController();
     addTearDown(controller.dispose);

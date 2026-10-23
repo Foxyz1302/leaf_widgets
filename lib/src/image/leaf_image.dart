@@ -58,7 +58,7 @@ class GradientRevealAnimation extends LeafRevealAnimation {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, child) {
-        final t = controller.value;
+        final t = curve.transform(controller.value);
         final startStop1 = -window;
         final startStop2 = 0.0;
         final stop1 = lerpDouble(startStop1, finalStop2 - window, t)!;
