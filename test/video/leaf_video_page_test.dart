@@ -84,7 +84,14 @@ void main() {
   final adapters = <int, FakeAdapter>{};
   BuildContext? pageContext;
 
-  Widget harness({required int pageCount, int initialPage = 0, bool enableChrome = false, Map<int, FakeAdapter> inject = const {}}) {
+  Widget harness({
+    required int pageCount,
+    int initialPage = 0,
+    bool enableChrome = false,
+    bool deferWhileScrolling = false,
+    List<int>? created,
+    Map<int, FakeAdapter> inject = const {},
+  }) {
     adapters.clear();
     pageContext = null;
     controller = PageController(initialPage: initialPage);
@@ -99,7 +106,11 @@ void main() {
             final adapter = adapters.putIfAbsent(i, () => inject[i] ?? FakeAdapter());
             return LeafVideoPage(
               key: ValueKey(i),
-              createAdapter: () => adapter,
+              deferWhileScrolling: deferWhileScrolling,
+              createAdapter: () {
+                created?.add(i);
+                return adapter;
+              },
               url: 'https://example.com/$i.mp4',
               thumbnail: Text('thumb $i'),
             );
@@ -188,6 +199,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(adapters[1]!.playing, isTrue);
     expect(adapters[0]!.playing, isFalse);
+  });
+
+  testWidgets('deferWhileScrolling: a page built mid-swipe creates its player once the pager settles', (tester) async {
+    final created = <int>[];
+    await tester.pumpWidget(harness(pageCount: 3, deferWhileScrolling: true, created: created));
+    await tester.pumpAndSettle();
+    expect(created, [0, 1]);
+
+    unawaited(controller.animateToPage(1, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('thumb 2', skipOffstage: false), findsOneWidget);
+    expect(created, [0, 1]);
+
+    await tester.pumpAndSettle();
+    expect(created, [0, 1, 2]);
+  });
+
+  testWidgets('without deferWhileScrolling a page built mid-swipe creates its player at once', (tester) async {
+    final created = <int>[];
+    await tester.pumpWidget(harness(pageCount: 3, created: created));
+    await tester.pumpAndSettle();
+    unawaited(controller.animateToPage(1, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(created, [0, 1, 2]);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('ready event drops the thumbnail', (tester) async {
