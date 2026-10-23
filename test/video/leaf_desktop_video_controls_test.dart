@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:leaf_widgets/leaf_widgets.dart';
@@ -156,6 +158,41 @@ void main() {
     await tester.pump();
     expect(barOf(tester).opacity, 1.0);
     expect(find.byType(LeafScrubber), findsOneWidget);
+  });
+
+  testWidgets('a scrubber tick lays out and repaints nothing above the scrubber', (tester) async {
+    final adapter = FakeAdapter()..playing = true;
+    await tester.pumpWidget(harness(adapter, hideDelay: const Duration(hours: 1)));
+    await tester.pump();
+    final bar = tester.renderObject(find.ancestor(of: find.byType(LeafScrubber), matching: find.byType(Column)).first);
+    final barId = describeIdentity(bar);
+    adapter.emitPosition(const Duration(seconds: 20));
+    await tester.pump();
+    await tester.pump();
+
+    final laidOut = <String>[];
+    var timeTextPaints = 0;
+    final saved = debugPrint;
+    debugPrintLayouts = true;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null && message.startsWith('Laying out')) laidOut.add(message);
+    };
+    debugOnProfilePaint = (renderObject) {
+      if (renderObject is RenderParagraph && renderObject.text.toPlainText().contains(' / ')) timeTextPaints++;
+    };
+    try {
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    } finally {
+      debugPrint = saved;
+      debugPrintLayouts = false;
+      debugOnProfilePaint = null;
+    }
+    expect(laidOut, isNotEmpty);
+    expect(laidOut.where((line) => line.contains(barId)), isEmpty);
+    expect(timeTextPaints, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('volume UI only with HasVolume; mute toggles', (tester) async {
