@@ -150,6 +150,23 @@ void main() {
     expect(progress, lessThan(0.001)); // spring settles asymptotically, never exactly 0
   });
 
+  testWidgets('dismiss drag and spring-back do not re-invoke pageBuilder', (tester) async {
+    final counts = <int, int>{};
+    var frames = 0;
+    await tester.pumpWidget(_harness(
+      pageBuilder: (context, i) {
+        counts[i] = (counts[i] ?? 0) + 1;
+        return _zoomablePage(context, i);
+      },
+      onProgress: (_) => frames++,
+    ));
+    final before = Map.of(counts);
+    await tester.timedDrag(find.byType(LeafViewer), const Offset(0, 100), const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(frames, greaterThan(5));
+    expect(counts, before);
+  });
+
   testWidgets('1× vertical drag past 25% flies off and dismisses', (tester) async {
     var dismissed = false;
     var sawProgress = false;

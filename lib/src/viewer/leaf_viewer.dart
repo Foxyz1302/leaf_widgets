@@ -177,10 +177,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _currentIndex = widget.pageController?.initialPage ?? widget.initialPage;
     _indexNotifier.value = _currentIndex;
     _pageController = widget.pageController ?? PageController(initialPage: _currentIndex);
-    _dismissCtrl = AnimationController.unbounded(vsync: this)
-      ..addListener(() {
-        if (mounted) setState(() {});
-      });
+    _dismissCtrl = AnimationController.unbounded(vsync: this);
     if (widget.enableChrome) {
       _chrome = LeafViewerChrome(autoHide: !leafIsDesktopPlatform());
     }
@@ -309,7 +306,6 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 
   @override
   Widget build(BuildContext context) {
-    final progress = _dismissProgress;
     final behavior = ScrollConfiguration.of(context);
     final horizontal = widget.scrollDirection == Axis.horizontal;
     final desktop = leafIsDesktopPlatform();
@@ -325,10 +321,35 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
         child: LayoutBuilder(
           builder: (context, constraints) {
             _viewerSize = constraints.biggest;
+            final pager = ScrollConfiguration(
+              behavior: behavior.copyWith(
+                dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
+              ),
+              child: PageView.builder(
+                controller: _pageController,
+                physics: const PageScrollPhysics(),
+                scrollDirection: widget.scrollDirection,
+                // Keep adjacent pages alive so their zoom state
+                // survives swipes (and preloads neighbors).
+                allowImplicitScrolling: true,
+                itemCount: widget.pageCount,
+                onPageChanged: (index) {
+                  widget.onPageChanged?.call(index);
+                  _onPageIndexChanged(index);
+                },
+                itemBuilder: (context, index) {
+                  return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
+                },
+              ),
+            );
             return Stack(
               fit: StackFit.expand,
               children: [
-                if (widget.backgroundBuilder != null) widget.backgroundBuilder!(context, progress),
+                if (widget.backgroundBuilder != null)
+                  AnimatedBuilder(
+                    animation: _dismissCtrl,
+                    builder: (context, _) => widget.backgroundBuilder!(context, _dismissProgress),
+                  ),
                 Listener(
                   behavior: HitTestBehavior.opaque,
                   onPointerSignal: _onPointerSignal,
@@ -340,31 +361,12 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
                     onHorizontalDragUpdate: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
                     onHorizontalDragEnd: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
                     onTapUp: _onTapUp,
-                    child: Transform.translate(
-                      offset: _dismissOffsetVector,
-                      child: Transform.scale(
-                        scale: 1.0 - _dismissProgress * 0.15,
-                        child: ScrollConfiguration(
-                          behavior: behavior.copyWith(
-                            dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
-                          ),
-                          child: PageView.builder(
-                            controller: _pageController,
-                            physics: const PageScrollPhysics(),
-                            scrollDirection: widget.scrollDirection,
-                            // Keep adjacent pages alive so their zoom state
-                            // survives swipes (and preloads neighbors).
-                            allowImplicitScrolling: true,
-                            itemCount: widget.pageCount,
-                            onPageChanged: (index) {
-                              widget.onPageChanged?.call(index);
-                              _onPageIndexChanged(index);
-                            },
-                            itemBuilder: (context, index) {
-                              return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
-                            },
-                          ),
-                        ),
+                    child: AnimatedBuilder(
+                      animation: _dismissCtrl,
+                      child: pager,
+                      builder: (context, child) => Transform.translate(
+                        offset: _dismissOffsetVector,
+                        child: Transform.scale(scale: 1.0 - _dismissProgress * 0.15, child: child),
                       ),
                     ),
                   ),
