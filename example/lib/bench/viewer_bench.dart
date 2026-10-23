@@ -183,6 +183,10 @@ class _ViewerPageState extends State<_ViewerPage> {
   void initState() {
     super.initState();
     BenchCounters.scrollProbe = () => _controller.hasClients && _controller.position.isScrollingNotifier.value;
+    BenchCounters.midSwipeProbe = () {
+      final page = _controller.hasClients ? _controller.page : null;
+      return page != null && (page - page.round()).abs() > 0.01;
+    };
     _recorder.start();
     _beginPhase('open');
     unawaited(_run());
@@ -191,6 +195,7 @@ class _ViewerPageState extends State<_ViewerPage> {
   @override
   void dispose() {
     BenchCounters.scrollProbe = null;
+    BenchCounters.midSwipeProbe = null;
     _recorder.stop();
     _controller.dispose();
     super.dispose();

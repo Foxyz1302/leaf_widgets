@@ -186,6 +186,10 @@ void main() {
     final hostTick = ValueNotifier<int>(0);
     addTearDown(hostTick.dispose);
     BenchCounters.scrollProbe = () => controller.hasClients && controller.position.isScrollingNotifier.value;
+    BenchCounters.midSwipeProbe = () {
+      final page = controller.hasClients ? controller.page : null;
+      return page != null && (page - page.round()).abs() > 0.01;
+    };
 
     Widget buildPage(BuildContext context, int index) {
       BenchCounters.pageBuilds++;
@@ -393,6 +397,7 @@ void main() {
     } finally {
       probe.uninstall();
       BenchCounters.scrollProbe = null;
+      BenchCounters.midSwipeProbe = null;
     }
 
     for (final p in phases.where((p) => !p.name.startsWith('playing'))) {
@@ -526,7 +531,9 @@ void main() {
   testWidgets('decoded image size per page path', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 3.0;
+    tester.view.display.size = const Size(1080, 2400);
     addTearDown(tester.view.reset);
+    addTearDown(tester.view.display.reset);
     final bytes = (await tester.runAsync(() async {
       final image = await createTestImage(width: 4000, height: 3000, cache: false);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -564,6 +571,132 @@ void main() {
       ),
     ];
     _report('decode', {'viewportPx': '1080x2400', 'sourcePx': '4000x3000', 'results': results});
+
+    imageCache
+      ..clear()
+      ..clearLiveImages();
+    final provider = MemoryImage(Uint8List.fromList(bytes));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LeafViewer(pageCount: 1, pageBuilder: (context, i) => LeafZoomable.image(image: Image(image: provider, fit: BoxFit.contain))),
+      ),
+    );
+    Future<String?> shown() async {
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+        await tester.pump();
+      }
+      final images = [for (final raw in tester.widgetList<RawImage>(find.byType(RawImage))) ?raw.image];
+      return images.isEmpty ? null : '${images.first.width}x${images.first.height}';
+    }
+
+    final at1x = await shown();
+    final zoom = LeafViewer.controllerOf(tester.element(find.byType(LeafZoomable)))!;
+    zoom.scaleUpdate(3, Offset.zero, Offset.zero);
+    await tester.pump();
+    final zoomed = await shown();
+    zoom.scaleUpdate(1, Offset.zero, Offset.zero);
+    await tester.pump();
+    final back = await shown();
+    await tester.pumpWidget(const SizedBox.shrink());
+    _report('decode-zoom-cycle', {'path': 'LeafZoomable.image', 'at1x': at1x, 'zoomed3x': zoomed, 'back1x': back});
     imageCache.clear();
+  });
+
+  testWidgets('viewer opened on a video: concurrent first-frame decodes', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+    BenchCounters.reset();
+    final controller = PageController(initialPage: 2);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LeafViewer(
+            pageCount: 5,
+            pageController: controller,
+            enableChrome: true,
+            enableSwipeGestures: true,
+            pageBuilder: (context, i) => LeafVideoPage(
+              createAdapter: () => BenchVideoAdapter(seed: i),
+              url: 'bench://open/$i',
+              aspectRatio: 16 / 9,
+              controlsBuilder: (context, adapter) => LeafVideoControls(adapter: adapter),
+            ),
+          ),
+        ),
+      ),
+    );
+    final readyMs = <String, int>{};
+    for (var t = 16; t <= 1600; t += 16) {
+      await tester.pump(const Duration(milliseconds: 16));
+      for (final seed in BenchCounters.readySeeds) {
+        readyMs.putIfAbsent('page$seed', () => t);
+      }
+    }
+    _report('open-first-frames', {
+      'activePage': 2,
+      'peakConcurrentFirstFrames': BenchCounters.peakDecoding,
+      'firstFrameAtMs': readyMs,
+      'loads': BenchCounters.loads,
+    });
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('desktop controls while playing: hidden and visible bar', (tester) async {
+    Future<Map<String, Object>> measure(String name, Duration hideDelay) async {
+      final adapter = BenchVideoAdapter(seed: 7);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                Positioned.fill(child: adapter.surface),
+                Positioned.fill(child: LeafDesktopVideoControls(adapter: adapter, hideDelay: hideDelay)),
+              ],
+            ),
+          ),
+        ),
+      );
+      unawaited(adapter.load(url: 'bench://desktop'));
+      await tester.pump(const Duration(milliseconds: 400));
+      adapter.play();
+      for (var t = 0; t < 1500; t += 16) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final probe = _Probe()..install();
+      var wanted = 0, ticking = 0;
+      const slots = 125;
+      final r0 = probe.rebuilds, l0 = probe.layouts, p0 = probe.paints;
+      try {
+        for (var i = 0; i < slots; i++) {
+          await tester.binding.delayed(const Duration(milliseconds: 16));
+          if (tester.binding.hasScheduledFrame) wanted++;
+          await tester.pump();
+          if (SchedulerBinding.instance.transientCallbackCount > 0) ticking++;
+        }
+      } finally {
+        probe.uninstall();
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      adapter.dispose();
+      await tester.pump(const Duration(seconds: 1));
+      double perFrame(int total) => double.parse((total / slots).toStringAsFixed(1));
+      return {
+        'name': name,
+        'framesWantedPerSecond': (wanted / (slots * 0.016)).round(),
+        'tickingFrames': ticking,
+        'rebuildsPerFrame': perFrame(probe.rebuilds - r0),
+        'layoutsPerFrame': perFrame(probe.layouts - l0),
+        'paintsPerFrame': perFrame(probe.paints - p0),
+      };
+    }
+
+    _report('desktop-controls', [
+      await measure('bar hidden', const Duration(milliseconds: 500)),
+      await measure('bar visible', const Duration(hours: 1)),
+    ]);
   });
 }

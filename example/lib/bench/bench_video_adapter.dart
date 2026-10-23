@@ -15,19 +15,30 @@ class BenchCounters {
   static int createsWhileScrolling = 0;
   static int loadsWhileScrolling = 0;
   static int disposesWhileScrolling = 0;
+  static int plays = 0;
+  static int playsMidSwipe = 0;
+  static int pausesMidSwipe = 0;
+  static int decoding = 0;
+  static int peakDecoding = 0;
+  static final readySeeds = <int>[];
 
   static bool Function()? scrollProbe;
+  static bool Function()? midSwipeProbe;
 
   static bool get _scrolling => scrollProbe?.call() ?? false;
+  static bool get _midSwipe => midSwipeProbe?.call() ?? false;
 
   static void reset() {
     creates = loads = disposes = pageBuilds = live = loaded = peakLive = peakLoaded = 0;
     createsWhileScrolling = loadsWhileScrolling = disposesWhileScrolling = 0;
+    plays = playsMidSwipe = pausesMidSwipe = decoding = peakDecoding = 0;
+    readySeeds.clear();
   }
 
   static void resetPeaks() {
     peakLive = live;
     peakLoaded = loaded;
+    peakDecoding = decoding;
   }
 
   static Map<String, int> snapshot() => {
@@ -38,9 +49,12 @@ class BenchCounters {
     'createsWhileScrolling': createsWhileScrolling,
     'loadsWhileScrolling': loadsWhileScrolling,
     'disposesWhileScrolling': disposesWhileScrolling,
+    'plays': plays,
+    'playsMidSwipe': playsMidSwipe,
+    'pausesMidSwipe': pausesMidSwipe,
   };
 
-  static Map<String, int> peaks() => {'peakLive': peakLive, 'peakLoaded': peakLoaded};
+  static Map<String, int> peaks() => {'peakLive': peakLive, 'peakLoaded': peakLoaded, 'peakDecoding': peakDecoding};
 }
 
 void spin(int ms) {
@@ -71,6 +85,7 @@ class BenchVideoAdapter extends VideoPlayerAdapter {
 
   Timer? _ticker;
   bool _loadStarted = false;
+  bool _awaitingFirstFrame = false;
   bool _loaded = false;
   bool _playing = false;
   bool _disposed = false;
@@ -89,6 +104,7 @@ class BenchVideoAdapter extends VideoPlayerAdapter {
       BenchCounters.loaded++;
       BenchCounters.peakLoaded = BenchCounters.peakLoaded < BenchCounters.loaded ? BenchCounters.loaded : BenchCounters.peakLoaded;
     }
+    _beginFirstFrame();
     spin(loadCostMs);
     await Future<void>.delayed(const Duration(milliseconds: 150));
     if (_disposed) return;
@@ -96,9 +112,25 @@ class BenchVideoAdapter extends VideoPlayerAdapter {
     _buffer = const Duration(seconds: 8);
     _bufferCtrl.add(_buffer);
     Future<void>.delayed(const Duration(milliseconds: 80), () {
-      if (!_disposed) _readyCtrl.add(null);
+      if (_disposed) return;
+      _endFirstFrame();
+      BenchCounters.readySeeds.add(seed);
+      _readyCtrl.add(null);
     });
     if (_playing) _start();
+  }
+
+  void _beginFirstFrame() {
+    if (_awaitingFirstFrame) return;
+    _awaitingFirstFrame = true;
+    BenchCounters.decoding++;
+    if (BenchCounters.decoding > BenchCounters.peakDecoding) BenchCounters.peakDecoding = BenchCounters.decoding;
+  }
+
+  void _endFirstFrame() {
+    if (!_awaitingFirstFrame) return;
+    _awaitingFirstFrame = false;
+    BenchCounters.decoding--;
   }
 
   void _start() {
@@ -139,6 +171,8 @@ class BenchVideoAdapter extends VideoPlayerAdapter {
   @override
   void play() {
     if (_disposed || _playing) return;
+    BenchCounters.plays++;
+    if (BenchCounters._midSwipe) BenchCounters.playsMidSwipe++;
     _playing = true;
     _playingCtrl.add(true);
     _start();
@@ -150,6 +184,7 @@ class BenchVideoAdapter extends VideoPlayerAdapter {
     _ticker?.cancel();
     _ticker = null;
     if (!_playing) return;
+    if (BenchCounters._midSwipe) BenchCounters.pausesMidSwipe++;
     _playing = false;
     _playingCtrl.add(false);
   }
@@ -170,6 +205,7 @@ class BenchVideoAdapter extends VideoPlayerAdapter {
     if (BenchCounters._scrolling) BenchCounters.disposesWhileScrolling++;
     BenchCounters.live--;
     if (_loadStarted) BenchCounters.loaded--;
+    _endFirstFrame();
     spin(disposeCostMs);
     _disposed = true;
     _ticker?.cancel();
