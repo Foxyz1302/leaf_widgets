@@ -22,6 +22,24 @@ class _DelayedImage extends ImageProvider<_DelayedImage> {
 
 int _shaderMasks(WidgetTester tester) => tester.layers.whereType<ShaderMaskLayer>().length;
 
+class _CountingController extends AnimationController {
+  _CountingController() : super(vsync: const TestVSync(), duration: const Duration(milliseconds: 100));
+
+  int statusListeners = 0;
+
+  @override
+  void addStatusListener(AnimationStatusListener listener) {
+    statusListeners++;
+    super.addStatusListener(listener);
+  }
+
+  @override
+  void removeStatusListener(AnimationStatusListener listener) {
+    statusListeners--;
+    super.removeStatusListener(listener);
+  }
+}
+
 void main() {
   testWidgets('gradient reveal masks while animating and drops the mask once revealed', (tester) async {
     final image = (await tester.runAsync(() => createTestImage(width: 40, height: 30)))!;
@@ -45,5 +63,17 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(_shaderMasks(tester), 1);
     imageCache.clear();
+  });
+
+  testWidgets('rebuilding the built-in reveals leaves no status listeners behind', (tester) async {
+    final controller = _CountingController();
+    addTearDown(controller.dispose);
+    for (final reveal in const <LeafRevealAnimation>[GradientRevealAnimation(), FadeRevealAnimation()]) {
+      for (var i = 0; i < 5; i++) {
+        await tester.pumpWidget(Builder(builder: (context) => reveal.build(context, const SizedBox(width: 10, height: 10), controller)));
+      }
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(controller.statusListeners, 0);
   });
 }

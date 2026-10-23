@@ -56,7 +56,7 @@ class GradientRevealAnimation extends LeafRevealAnimation {
   @override
   Widget build(BuildContext context, Widget child, AnimationController controller) {
     return AnimatedBuilder(
-      animation: CurvedAnimation(parent: controller, curve: curve),
+      animation: controller,
       builder: (context, child) {
         final t = controller.value;
         final startStop1 = -window;
@@ -137,7 +137,7 @@ class FadeRevealAnimation extends LeafRevealAnimation {
   @override
   Widget build(BuildContext context, Widget child, AnimationController controller) {
     return FadeTransition(
-      opacity: CurvedAnimation(parent: controller, curve: curve),
+      opacity: controller.drive(CurveTween(curve: curve)),
       child: child,
     );
   }
