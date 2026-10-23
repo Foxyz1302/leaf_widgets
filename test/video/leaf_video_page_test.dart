@@ -10,6 +10,7 @@ class FakeAdapter extends VideoPlayerAdapter {
   bool failLoad = false;
   bool disposed = false;
   bool playing = false;
+  int loads = 0;
 
   final plays = <int>[];
   final pauses = <int>[];
@@ -25,6 +26,7 @@ class FakeAdapter extends VideoPlayerAdapter {
 
   @override
   Future<void> load({required String url, Map<String, String>? headers}) async {
+    loads++;
     if (failLoad) throw Exception('load failed');
   }
 
@@ -174,5 +176,27 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox.shrink());
     expect(adapters[0]!.disposed, isTrue);
+  });
+
+  testWidgets('rebuilding with equal headers does not reload; changed headers do', (tester) async {
+    final adapter = FakeAdapter();
+    Widget page(String session) => MaterialApp(
+          home: LeafVideoPage(
+            createAdapter: () => adapter,
+            url: 'https://example.com/v.mp4',
+            headers: {'Referer': 'https://example.com/', 'X-Session': session},
+          ),
+        );
+    await tester.pumpWidget(page('a'));
+    await tester.pumpAndSettle();
+    expect(adapter.loads, 1);
+
+    await tester.pumpWidget(page('a'));
+    await tester.pumpAndSettle();
+    expect(adapter.loads, 1);
+
+    await tester.pumpWidget(page('b'));
+    await tester.pumpAndSettle();
+    expect(adapter.loads, 2);
   });
 }

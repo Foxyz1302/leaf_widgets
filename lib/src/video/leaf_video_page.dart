@@ -137,7 +137,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   @override
   void didUpdateWidget(LeafVideoPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url || oldWidget.headers != widget.headers) {
+    if (oldWidget.url != widget.url || !mapEquals(oldWidget.headers, widget.headers)) {
       _loaded = false;
       _ready = false;
       _failed = false;
