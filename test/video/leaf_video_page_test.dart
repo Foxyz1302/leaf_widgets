@@ -12,6 +12,7 @@ class FakeAdapter extends VideoPlayerAdapter {
   bool disposed = false;
   bool playing = false;
   int loads = 0;
+  int disposals = 0;
   Duration currentPosition = Duration.zero;
 
   final plays = <int>[];
@@ -76,7 +77,10 @@ class FakeAdapter extends VideoPlayerAdapter {
   @override
   void seek(Duration target) {}
   @override
-  void dispose() => disposed = true;
+  void dispose() {
+    disposals++;
+    disposed = true;
+  }
 }
 
 void main() {
@@ -89,6 +93,7 @@ void main() {
     int initialPage = 0,
     bool enableChrome = false,
     bool deferWhileScrolling = false,
+    bool deferDispose = false,
     List<int>? created,
     Map<int, FakeAdapter> inject = const {},
   }) {
@@ -107,6 +112,7 @@ void main() {
             return LeafVideoPage(
               key: ValueKey(i),
               deferWhileScrolling: deferWhileScrolling,
+              deferDispose: deferDispose,
               createAdapter: () {
                 created?.add(i);
                 return adapter;
@@ -226,6 +232,81 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(created, [0, 1, 2]);
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('deferDispose: a page dropped mid-swipe pauses at once and is disposed when the swipe has settled', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 5, deferDispose: true));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!;
+    expect(adapter.playing, isTrue);
+
+    unawaited(controller.animateToPage(3, duration: const Duration(milliseconds: 400), curve: Curves.linear));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('thumb 0', skipOffstage: false), findsNothing);
+    expect(adapter.playing, isFalse);
+    expect(adapter.disposed, isFalse, reason: 'the swipe still has frames to draw');
+
+    await tester.pumpAndSettle();
+    expect(adapter.disposals, 1);
+  });
+
+  testWidgets('deferDispose: a page that comes back before the dispose keeps its adapter, disposed once later', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 5, deferDispose: true));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!;
+
+    unawaited(controller.animateToPage(3, duration: const Duration(milliseconds: 400), curve: Curves.linear));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('thumb 0', skipOffstage: false), findsNothing);
+
+    unawaited(controller.animateToPage(0, duration: const Duration(milliseconds: 300), curve: Curves.linear));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('thumb 0', skipOffstage: false), findsOneWidget);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 2));
+    expect(adapter.disposals, 0);
+    expect(adapter.playing, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(adapter.disposals, 1);
+  });
+
+  testWidgets('deferDispose: nothing else scheduled, the adapter is disposed at the end of that frame', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, deferDispose: true));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!;
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(adapter.pauses, isNotEmpty);
+    expect(adapter.disposals, 1);
+  });
+
+  testWidgets('deferDispose: a perpetual animation holds the dispose for at most a second', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, deferDispose: true));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!;
+
+    await tester.pumpWidget(MaterialApp(key: UniqueKey(), home: const Center(child: CircularProgressIndicator())));
+    expect(adapter.playing, isFalse);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(adapter.disposed, isFalse);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(adapter.disposals, 1);
+  });
+
+  testWidgets('deferDispose: backgrounding the app disposes what is still pending', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, deferDispose: true));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!;
+
+    await tester.pumpWidget(MaterialApp(key: UniqueKey(), home: const Center(child: CircularProgressIndicator())));
+    expect(adapter.disposed, isFalse);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    expect(adapter.disposals, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   });
 
   testWidgets('ready event drops the thumbnail', (tester) async {

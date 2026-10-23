@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../viewer/leaf_chrome.dart';
 import '../viewer/leaf_viewer.dart';
@@ -38,6 +39,7 @@ class LeafVideoPage extends StatefulWidget {
     this.skipDuration = const Duration(seconds: 10),
     this.onFullscreenToggle,
     this.deferWhileScrolling = false,
+    this.deferDispose = false,
   });
 
   /// Creates the (unloaded) adapter. Called once per page state; the page owns
@@ -69,6 +71,15 @@ class LeafVideoPage extends StatefulWidget {
   /// passes never create one. Until then the page shows its [thumbnail].
   /// Off by default.
   final bool deferWhileScrolling;
+
+  /// When the page goes away (e.g. it drops out of the viewer's cache during
+  /// or at the end of a swipe), pause the player at once but dispose it at
+  /// the end of the first frame after which no other frame is scheduled (at
+  /// most a second later), so the dispose never delays a frame that is
+  /// already on its way. A page that comes back meanwhile and gets the same
+  /// adapter from [createAdapter] keeps it; the app going to the background
+  /// disposes whatever is still pending. Off by default.
+  final bool deferDispose;
 
   @override
   State<LeafVideoPage> createState() => _LeafVideoPageState();
@@ -105,6 +116,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
 
   void _createAdapter() {
     final adapter = widget.createAdapter();
+    _PendingDisposals.instance.reclaim(adapter);
     _adapter = adapter;
     _subs.add(adapter.playingStream.listen(_onPlayingChanged));
     _subs.add(adapter.readyStream.listen((_) {
@@ -299,7 +311,15 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     _waitForIdle?.removeListener(_onScrolling);
     WidgetsBinding.instance.removeObserver(this);
     _releaseGate();
-    _adapter?.dispose();
+    final adapter = _adapter;
+    if (adapter != null) {
+      if (widget.deferDispose) {
+        if (_loadIssued) adapter.pause();
+        _PendingDisposals.instance.add(adapter);
+      } else {
+        adapter.dispose();
+      }
+    }
     super.dispose();
   }
 
@@ -347,5 +367,67 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
           ),
       ],
     );
+  }
+}
+
+class _PendingDisposals with WidgetsBindingObserver {
+  _PendingDisposals._();
+
+  static final instance = _PendingDisposals._();
+
+  static const _maxWait = Duration(seconds: 1);
+
+  final _adapters = <VideoPlayerAdapter>{};
+  bool _waiting = false;
+  Duration? _since;
+
+  void add(VideoPlayerAdapter adapter) {
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      adapter.dispose();
+      return;
+    }
+    if (_adapters.isEmpty) WidgetsBinding.instance.addObserver(this);
+    _adapters.add(adapter);
+    _waitForFrameEnd();
+  }
+
+  void reclaim(VideoPlayerAdapter adapter) {
+    if (_adapters.remove(adapter) && _adapters.isEmpty) _reset();
+  }
+
+  void _waitForFrameEnd() {
+    if (_waiting) return;
+    _waiting = true;
+    SchedulerBinding.instance.addPostFrameCallback(_onFrameEnd);
+  }
+
+  void _onFrameEnd(Duration timeStamp) {
+    _waiting = false;
+    if (_adapters.isEmpty) return;
+    final since = _since ??= timeStamp;
+    if (SchedulerBinding.instance.hasScheduledFrame && timeStamp - since < _maxWait) {
+      _waitForFrameEnd();
+      return;
+    }
+    _flush();
+  }
+
+  void _flush() {
+    final adapters = _adapters.toList();
+    _reset();
+    for (final adapter in adapters) {
+      adapter.dispose();
+    }
+  }
+
+  void _reset() {
+    _adapters.clear();
+    _since = null;
+    WidgetsBinding.instance.removeObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden || state == AppLifecycleState.detached) _flush();
   }
 }
