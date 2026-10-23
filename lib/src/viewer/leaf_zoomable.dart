@@ -1,5 +1,11 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'leaf_pan_zoom_recognizer.dart';
@@ -21,6 +27,15 @@ import 'leaf_zoom_controller.dart';
 /// are extracted from the image stream at load time, so both the contained
 /// size and the 1:1 step work without passing anything.
 ///
+/// A large [LeafZoomable.image] is decoded at half resolution while it is
+/// shown at 1x, when half still covers the display in both orientations and
+/// the image is drawn with mipmaps ([FilterQuality.medium], or
+/// [FilterQuality.high] under Impeller): mipmapped sampling reads that half
+/// level anyway, so the 1x picture is the same at a quarter of the memory.
+/// Zooming in loads the full resolution and swaps it in once decoded;
+/// settling back at 1x returns to the half-size decode. Set
+/// [decodeFullResolution] to always decode at full resolution.
+///
 /// Set [enabled] to false to render content without zoom (e.g. until the
 /// image has loaded).
 class LeafZoomable extends StatefulWidget {
@@ -33,7 +48,8 @@ class LeafZoomable extends StatefulWidget {
     this.enabled = true,
     this.onTap,
     this.onZoomChanged,
-  }) : image = null;
+  })  : image = null,
+        decodeFullResolution = false;
 
   const LeafZoomable.image({
     super.key,
@@ -42,6 +58,7 @@ class LeafZoomable extends StatefulWidget {
     this.enabled = true,
     this.onTap,
     this.onZoomChanged,
+    this.decodeFullResolution = false,
   })  : child = image,
         childSize = null,
         originalSize = null,
@@ -54,6 +71,9 @@ class LeafZoomable extends StatefulWidget {
   /// Non-null when created via [LeafZoomable.image]: the image's pixel
   /// dimensions are resolved from its stream to size the zoom correctly.
   final Image? image;
+
+  /// Decode [image] at full resolution also at 1x (see the class docs).
+  final bool decodeFullResolution;
 
   final double maxScale;
   final bool enabled;
@@ -82,8 +102,13 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
 
   ImageStream? _imageStream;
   ImageStreamListener? _imageListener;
+  ImageProvider? _baseImage;
   Size? _decodedSize;
-  bool _imageResolved = false;
+  bool _baseReduced = false;
+  ImageStream? _fullStream;
+  ImageStreamListener? _fullListener;
+  bool _fullReady = false;
+  bool _levelCheckScheduled = false;
   bool _lastZoomed = false;
 
   void _notifyZoom() {
@@ -91,6 +116,7 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
     if (zoomed == _lastZoomed) return;
     _lastZoomed = zoomed;
     widget.onZoomChanged?.call(zoomed);
+    if (_baseReduced) _scheduleLevelCheck();
   }
 
   @override
@@ -113,10 +139,7 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
       _registry = registry;
       _register();
     }
-    if (widget.image != null && !_imageResolved) {
-      _imageResolved = true;
-      _resolveImageDimensions();
-    }
+    if (widget.image != null) _resolveBase();
   }
 
   @override
@@ -134,10 +157,13 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
     }
     if (widget.image?.image != oldWidget.image?.image) {
       _stopImageDimensions();
+      _stopFull();
+      _baseImage = null;
       _decodedSize = null;
-      _imageResolved = widget.image != null;
-      if (_imageResolved) _resolveImageDimensions();
+      _baseReduced = false;
+      _fullReady = false;
     }
+    if (widget.image != null) _resolveBase();
   }
 
   void _register() {
@@ -152,14 +178,41 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
     _registry?.unregister(index, _controller);
   }
 
-  void _resolveImageDimensions() {
-    final image = widget.image!;
-    final stream = image.image.resolve(createLocalImageConfiguration(context));
+  ImageProvider _baseFor(Image image) {
+    final source = image.image;
+    if (widget.decodeFullResolution ||
+        image.runtimeType != Image ||
+        source is ResizeImage ||
+        image.centerSlice != null ||
+        image.repeat != ImageRepeat.noRepeat ||
+        image.fit == BoxFit.none) {
+      return source;
+    }
+    final mipmapped = image.filterQuality == FilterQuality.medium ||
+        (image.filterQuality == FilterQuality.high && ui.ImageFilter.isShaderFilterSupported);
+    final display = View.maybeOf(context)?.display.size;
+    if (!mipmapped || display == null || display.isEmpty) return source;
+    return _HalfImage(source, Size(math.max(display.width, display.height), math.min(display.width, display.height)));
+  }
+
+  void _resolveBase() {
+    final base = _baseFor(widget.image!);
+    if (base == _baseImage) return;
+    _stopImageDimensions();
+    _baseImage = base;
+    final stream = base.resolve(createLocalImageConfiguration(context));
     final listener = ImageStreamListener((info, _) {
-      final size = Size(info.image.width.toDouble(), info.image.height.toDouble());
+      final decoded = Size(info.image.width.toDouble(), info.image.height.toDouble());
       info.dispose();
-      if (!mounted || size == _decodedSize) return;
-      setState(() => _decodedSize = size);
+      final completer = stream.completer;
+      final size = (completer == null ? null : _sourceSizes[completer]?.size) ?? decoded;
+      final reduced = size.width > decoded.width;
+      if (!mounted || (size == _decodedSize && reduced == _baseReduced)) return;
+      setState(() {
+        _decodedSize = size;
+        _baseReduced = reduced;
+      });
+      if (reduced) _scheduleLevelCheck();
     });
     stream.addListener(listener);
     _imageStream = stream;
@@ -173,9 +226,72 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
     _imageListener = null;
   }
 
+  void _scheduleLevelCheck() {
+    if (_levelCheckScheduled) return;
+    _levelCheckScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _levelCheckScheduled = false;
+      if (mounted) _updateLevel();
+    });
+    SchedulerBinding.instance.ensureVisualUpdate();
+  }
+
+  void _updateLevel() {
+    final image = widget.image;
+    final wantFull = image != null && _baseReduced && _controller.zoomed;
+    if (wantFull && _fullStream == null) {
+      final stream = image.image.resolve(createLocalImageConfiguration(context));
+      final listener = ImageStreamListener(
+        (info, _) {
+          info.dispose();
+          if (!mounted || _fullReady || _fullStream != stream) return;
+          setState(() => _fullReady = true);
+        },
+        onError: (error, stackTrace) {},
+      );
+      _fullStream = stream;
+      _fullListener = listener;
+      stream.addListener(listener);
+    } else if (!wantFull && _fullStream != null) {
+      _stopFull();
+      if (_fullReady) setState(() => _fullReady = false);
+    }
+  }
+
+  void _stopFull() {
+    final stream = _fullStream, listener = _fullListener;
+    if (stream != null && listener != null) stream.removeListener(listener);
+    _fullStream = null;
+    _fullListener = null;
+  }
+
+  static Image _withImage(Image image, ImageProvider provider) => Image(
+        key: image.key,
+        image: provider,
+        frameBuilder: image.frameBuilder,
+        loadingBuilder: image.loadingBuilder,
+        errorBuilder: image.errorBuilder,
+        semanticLabel: image.semanticLabel,
+        excludeFromSemantics: image.excludeFromSemantics,
+        width: image.width,
+        height: image.height,
+        color: image.color,
+        opacity: image.opacity,
+        colorBlendMode: image.colorBlendMode,
+        fit: image.fit,
+        alignment: image.alignment,
+        repeat: image.repeat,
+        centerSlice: image.centerSlice,
+        matchTextDirection: image.matchTextDirection,
+        gaplessPlayback: image.gaplessPlayback,
+        isAntiAlias: image.isAntiAlias,
+        filterQuality: image.filterQuality,
+      );
+
   @override
   void dispose() {
     _stopImageDimensions();
+    _stopFull();
     _unregister();
     _controller.removeListener(_notifyZoom);
     _controller.dispose();
@@ -223,11 +339,13 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
         final contained = widget.childSize ??
             (decoded != null ? LeafZoomable.containSize(viewport, decoded) : viewport);
         final original = widget.originalSize ?? decoded;
+        final image = widget.image, base = _baseImage;
+        final shown = image == null || base == null || _fullReady || identical(base, image.image) ? widget.child : _withImage(image, base);
         final content = Center(
           child: SizedBox(
             width: contained.width,
             height: contained.height,
-            child: widget.child,
+            child: shown,
           ),
         );
         if (!widget.enabled) return content;
@@ -276,4 +394,85 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
       },
     );
   }
+}
+
+class _SourceSize {
+  Size? size;
+}
+
+final _sourceSizes = Expando<_SourceSize>();
+
+@immutable
+class _HalfImageKey {
+  const _HalfImageKey(this.sourceKey, this.display);
+
+  final Object sourceKey;
+  final Size display;
+
+  @override
+  bool operator ==(Object other) => other is _HalfImageKey && other.sourceKey == sourceKey && other.display == display;
+
+  @override
+  int get hashCode => Object.hash(sourceKey, display);
+}
+
+class _HalfImage extends ImageProvider<_HalfImageKey> {
+  const _HalfImage(this.source, this.display);
+
+  final ImageProvider source;
+  final Size display;
+
+  @override
+  Future<_HalfImageKey> obtainKey(ImageConfiguration configuration) {
+    Completer<_HalfImageKey>? completer;
+    SynchronousFuture<_HalfImageKey>? result;
+    source.obtainKey(configuration).then((key) {
+      if (completer == null) {
+        result = SynchronousFuture(_HalfImageKey(key, display));
+      } else {
+        completer.complete(_HalfImageKey(key, display));
+      }
+    });
+    if (result != null) return result!;
+    completer = Completer<_HalfImageKey>();
+    return completer.future;
+  }
+
+  @override
+  ImageStreamCompleter loadImage(_HalfImageKey key, ImageDecoderCallback decode) {
+    final sourceSize = _SourceSize();
+    Future<ui.Codec> decodeHalf(ui.ImmutableBuffer buffer, {ui.TargetImageSizeCallback? getTargetSize}) {
+      return decode(
+        buffer,
+        getTargetSize: (width, height) {
+          sourceSize.size = Size(width.toDouble(), height.toDouble());
+          return getTargetSize?.call(width, height) ?? _targetSize(width, height);
+        },
+      );
+    }
+
+    final completer = source.loadImage(key.sourceKey, decodeHalf);
+    _sourceSizes[completer] = sourceSize;
+    completer.addEphemeralErrorListener((error, stackTrace) {
+      scheduleMicrotask(() => PaintingBinding.instance.imageCache.evict(key));
+    });
+    return completer;
+  }
+
+  ui.TargetImageSize _targetSize(int width, int height) {
+    final source = Size(width.toDouble(), height.toDouble());
+    final upright = LeafZoomable.containSize(display, source);
+    final turned = LeafZoomable.containSize(display.flipped, source);
+    final shown = Size(math.max(upright.width, turned.width), math.max(upright.height, turned.height));
+    if (width >= 2 * shown.width && height >= 2 * shown.height) {
+      return ui.TargetImageSize(width: (width / 2).round(), height: (height / 2).round());
+    }
+    return ui.TargetImageSize(width: width, height: height);
+  }
+
+  @override
+  bool operator ==(Object other) => other is _HalfImage && other.source == source && other.display == display;
+
+  @override
+  int get hashCode => Object.hash(source, display);
 }
