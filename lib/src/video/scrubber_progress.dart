@@ -180,10 +180,8 @@ class ScrubberProgress extends ChangeNotifier {
 }
 
 /// Paints a [ScrubberProgress] into a rounded track: background, buffered
-/// and played fills, and with [knob] a white dot of the track's height at
-/// the played edge. The dot and the played fill are then cut with a hard
-/// edge at the played position whenever the dot's 12 px box reaches past
-/// it, as the widget stack this painter replaced did.
+/// and played fills, and with [knob] a 12 px white dot centred on the played
+/// edge, drawn over the track and past its height.
 class ScrubberTrackPainter extends CustomPainter {
   ScrubberTrackPainter(this.progress, {required this.playedColor, this.knob = false}) : super(repaint: progress);
 
@@ -195,14 +193,17 @@ class ScrubberTrackPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final bounds = Offset.zero & size;
     final played = Rect.fromLTWH(0, 0, progress.played * size.width, size.height);
-    final knobLeft = math.max(0.0, math.min(played.width - 6, size.width - 12));
     canvas
+      ..save()
       ..clipRRect(RRect.fromRectAndRadius(bounds, const Radius.circular(3)))
       ..drawRect(bounds, Paint()..color = Colors.white12)
-      ..drawRect(Rect.fromLTWH(0, 0, progress.buffered * size.width, size.height), Paint()..color = Colors.white30);
-    if (knob && knobLeft + 12 > played.width) canvas.clipRect(played, doAntiAlias: false);
-    canvas.drawRect(played, Paint()..color = playedColor);
-    if (knob) canvas.drawCircle(Offset(knobLeft + 6, size.height / 2), math.min(12.0, size.height) / 2, Paint()..color = Colors.white);
+      ..drawRect(Rect.fromLTWH(0, 0, progress.buffered * size.width, size.height), Paint()..color = Colors.white30)
+      ..drawRect(played, Paint()..color = playedColor)
+      ..restore();
+    if (knob) {
+      final x = math.max(6.0, math.min(played.width, size.width - 6));
+      canvas.drawCircle(Offset(x, size.height / 2), 6, Paint()..color = Colors.white);
+    }
   }
 
   @override
