@@ -37,6 +37,8 @@ class FakeAdapter extends VideoPlayerAdapter {
 
   void emitReady() => _readyCtrl.add(null);
 
+  void emitPosition(Duration value) => _positionCtrl.add(value);
+
   @override
   Stream<Duration> get positionStream => _positionCtrl.stream;
   @override
@@ -169,6 +171,27 @@ void main() {
     adapters[0]!.emitPlaying(true);
     await tester.pump(const Duration(seconds: 4));
     expect(chrome.visible, isFalse, reason: 'playing releases the hold; timer hides chrome');
+  });
+
+  testWidgets('hidden chrome drops the control bar: no ticking while playing, back on show', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, enableChrome: true));
+    await tester.pumpAndSettle();
+    final chrome = LeafViewer.chromeOf(pageContext!)!;
+    final adapter = adapters[0]!..emitPlaying(true);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    expect(chrome.visible, isFalse);
+    expect(find.textContaining(' / '), findsNothing);
+
+    adapter.emitPosition(const Duration(seconds: 5));
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+
+    chrome.show();
+    await tester.pump();
+    expect(find.text('00:00 / 01:00'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('disposing the page disposes the adapter', (tester) async {

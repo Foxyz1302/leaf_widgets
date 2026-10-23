@@ -116,13 +116,9 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
           if (chrome != null)
             ValueListenableBuilder<bool>(
               valueListenable: chrome.visibleListenable,
-              builder: (context, visible, _) => IgnorePointer(
-                ignoring: !visible,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  opacity: visible ? 1.0 : 0.0,
-                  child: Align(alignment: Alignment.bottomCenter, child: SafeArea(child: _buildBar(context))),
-                ),
+              builder: (context, visible, _) => _ChromeFade(
+                visible: visible,
+                builder: (context) => Align(alignment: Alignment.bottomCenter, child: SafeArea(child: _buildBar(context))),
               ),
             )
           else
@@ -201,6 +197,41 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ChromeFade extends StatefulWidget {
+  const _ChromeFade({required this.visible, required this.builder});
+
+  final bool visible;
+  final WidgetBuilder builder;
+
+  @override
+  State<_ChromeFade> createState() => _ChromeFadeState();
+}
+
+class _ChromeFadeState extends State<_ChromeFade> {
+  late bool _built = widget.visible;
+
+  @override
+  void didUpdateWidget(_ChromeFade oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.visible) _built = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: !widget.visible,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 200),
+        opacity: widget.visible ? 1.0 : 0.0,
+        onEnd: () {
+          if (!widget.visible && _built) setState(() => _built = false);
+        },
+        child: _built ? widget.builder(context) : const SizedBox.shrink(),
       ),
     );
   }
