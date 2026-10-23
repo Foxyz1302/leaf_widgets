@@ -168,6 +168,29 @@ void main() {
     expect(counts, before);
   });
 
+  testWidgets('the settled index flips when the swipe comes to rest, not at the midpoint', (tester) async {
+    final changed = <int>[];
+    final settled = <int>[];
+    ValueListenable<int>? index;
+    await tester.pumpWidget(_harness(
+      onPageChanged: changed.add,
+      pageBuilder: (context, i) {
+        index ??= LeafViewer.currentIndexListOf(context)?..addListener(() => settled.add(index!.value));
+        return _zoomablePage(context, i);
+      },
+    ));
+    final g = await tester.startGesture(const Offset(700, 300));
+    for (var i = 0; i < 10; i++) {
+      await g.moveBy(const Offset(-50, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(changed, [1]);
+    expect(settled, isEmpty);
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(settled, [1]);
+  });
+
   testWidgets('a rebuild inside a page lays out nothing above the page', (tester) async {
     final page = GlobalKey<_RebuildableState>();
     await tester.pumpWidget(_harness(pageBuilder: (context, i) => i == 0 ? _Rebuildable(key: page) : const SizedBox.expand()));

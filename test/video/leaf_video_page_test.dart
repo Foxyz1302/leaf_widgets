@@ -134,6 +134,23 @@ void main() {
     expect(adapters[0]!.playing, isTrue);
   });
 
+  testWidgets('the next video starts only once the swipe has settled', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 2));
+    await tester.pumpAndSettle();
+    final g = await tester.startGesture(const Offset(700, 300));
+    for (var i = 0; i < 10; i++) {
+      await g.moveBy(const Offset(-50, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(adapters[1]!.playing, isFalse);
+    expect(adapters[0]!.playing, isTrue);
+
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(adapters[1]!.playing, isTrue);
+    expect(adapters[0]!.playing, isFalse);
+  });
+
   testWidgets('ready event drops the thumbnail', (tester) async {
     await tester.pumpWidget(harness(pageCount: 1));
     await tester.pumpAndSettle();

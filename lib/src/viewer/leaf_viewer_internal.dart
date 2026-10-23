@@ -25,14 +25,16 @@ abstract class LeafViewerRegistry {
 }
 
 /// Internal: registry scope shared between [LeafViewer], [LeafZoomable] and
-/// the video pages. Carries the viewer's outward state: the active page index
-/// and, when enabled, the chrome reveal controller.
+/// the video pages. Carries the viewer's outward state: the settled page
+/// index and, when enabled, the chrome reveal controller.
 class LeafViewerScope extends InheritedWidget {
   const LeafViewerScope({required this.registry, required this.currentIndex, this.chrome, super.key, required super.child});
 
   final LeafViewerRegistry registry;
 
-  /// The currently settled page index (reactive; also drives the controls).
+  /// The page the pager last came to rest on (reactive): flips when a swipe
+  /// settles, not at its midpoint. The paging controls follow the nearest
+  /// page instead.
   final ValueListenable<int> currentIndex;
 
   /// Reveal state for chrome layers; null unless the viewer enabled chrome.

@@ -99,7 +99,9 @@ class LeafViewer extends StatefulWidget {
     return LeafPageIndexScope.maybeOf(context);
   }
 
-  /// Reactive index of the currently settled page, if inside a viewer.
+  /// Reactive index of the currently settled page, if inside a viewer: it
+  /// changes when a swipe or [LeafViewerControls.goToPage] comes to rest on
+  /// a page, not when a swipe passes the midpoint (that is [onPageChanged]).
   static ValueListenable<int>? currentIndexListOf(BuildContext context) {
     return LeafViewerScope.maybeOf(context)?.currentIndex;
   }
@@ -132,6 +134,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
   late final AnimationController _dismissCtrl;
   final Map<int, LeafZoomController> _controllers = {};
   final ValueNotifier<int> _indexNotifier = ValueNotifier(0);
+  final ValueNotifier<int> _settledIndex = ValueNotifier(0);
   final FocusNode _focusNode = FocusNode();
 
   int _currentIndex = 0;
@@ -176,6 +179,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     super.initState();
     _currentIndex = widget.pageController?.initialPage ?? widget.initialPage;
     _indexNotifier.value = _currentIndex;
+    _settledIndex.value = _currentIndex;
     _pageController = widget.pageController ?? PageController(initialPage: _currentIndex);
     _dismissCtrl = AnimationController.unbounded(vsync: this);
     if (widget.enableChrome) {
@@ -188,6 +192,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _focusNode.dispose();
     _dismissCtrl.dispose();
     _indexNotifier.dispose();
+    _settledIndex.dispose();
     _chrome?.dispose();
     if (widget.pageController == null) _pageController.dispose();
     super.dispose();
@@ -207,6 +212,15 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 
   @override
   LeafZoomController? get activeController => _controllers[_currentIndex];
+
+  bool _onScrollEnd(ScrollEndNotification notification) {
+    final metrics = notification.metrics;
+    if (notification.depth == 0 && metrics is PageMetrics) {
+      final page = metrics.page;
+      if (page != null && (page - page.round()).abs() < 0.01) _settledIndex.value = page.round();
+    }
+    return false;
+  }
 
   void _onPageIndexChanged(int index) {
     _currentIndex = index;
@@ -314,21 +328,24 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
       behavior: behavior.copyWith(
         dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
       ),
-      child: PageView.builder(
-        controller: _pageController,
-        physics: const PageScrollPhysics(),
-        scrollDirection: widget.scrollDirection,
-        // Keep adjacent pages alive so their zoom state
-        // survives swipes (and preloads neighbors).
-        allowImplicitScrolling: true,
-        itemCount: widget.pageCount,
-        onPageChanged: (index) {
-          widget.onPageChanged?.call(index);
-          _onPageIndexChanged(index);
-        },
-        itemBuilder: (context, index) {
-          return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
-        },
+      child: NotificationListener<ScrollEndNotification>(
+        onNotification: _onScrollEnd,
+        child: PageView.builder(
+          controller: _pageController,
+          physics: const PageScrollPhysics(),
+          scrollDirection: widget.scrollDirection,
+          // Keep adjacent pages alive so their zoom state
+          // survives swipes (and preloads neighbors).
+          allowImplicitScrolling: true,
+          itemCount: widget.pageCount,
+          onPageChanged: (index) {
+            widget.onPageChanged?.call(index);
+            _onPageIndexChanged(index);
+          },
+          itemBuilder: (context, index) {
+            return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
+          },
+        ),
       ),
     );
     return Focus(
@@ -337,7 +354,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
       onKeyEvent: widget.enableKeyboard ? _onKeyEvent : null,
       child: LeafViewerScope(
         registry: this,
-        currentIndex: _indexNotifier,
+        currentIndex: _settledIndex,
         chrome: _chrome,
         child: Stack(
           fit: StackFit.expand,
