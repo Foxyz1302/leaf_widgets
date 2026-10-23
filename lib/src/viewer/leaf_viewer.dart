@@ -5,6 +5,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart' show RenderViewportBase;
 import 'package:flutter/services.dart';
 
+import '../video/first_frame_gate.dart';
 import 'leaf_viewer_internal.dart';
 import 'leaf_chrome.dart';
 import 'leaf_zoom_controller.dart';
@@ -135,6 +136,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
   final Map<int, LeafZoomController> _controllers = {};
   final ValueNotifier<int> _indexNotifier = ValueNotifier(0);
   final ValueNotifier<int> _settledIndex = ValueNotifier(0);
+  final FirstFrameGate _firstFrameGate = FirstFrameGate(maxConcurrent: 1);
   final FocusNode _focusNode = FocusNode();
 
   int _currentIndex = 0;
@@ -356,6 +358,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
         registry: this,
         currentIndex: _settledIndex,
         chrome: _chrome,
+        firstFrameGate: _firstFrameGate,
         child: Stack(
           fit: StackFit.expand,
           children: [

@@ -84,10 +84,10 @@ void main() {
   final adapters = <int, FakeAdapter>{};
   BuildContext? pageContext;
 
-  Widget harness({required int pageCount, bool enableChrome = false, Map<int, FakeAdapter> inject = const {}}) {
+  Widget harness({required int pageCount, int initialPage = 0, bool enableChrome = false, Map<int, FakeAdapter> inject = const {}}) {
     adapters.clear();
     pageContext = null;
-    controller = PageController();
+    controller = PageController(initialPage: initialPage);
     return MaterialApp(
       home: Scaffold(
         body: LeafViewer(
@@ -116,6 +116,45 @@ void main() {
     expect(adapters[0]!.plays.length, 1);
     expect(adapters[1], isNotNull);
     expect(adapters[1]!.plays, isEmpty);
+  });
+
+  testWidgets('neighbours load one at a time, after the settled page shows its first frame', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 3, initialPage: 1));
+    await tester.pumpAndSettle();
+    expect(adapters[1]!.loads, 1);
+    expect(adapters[0]!.loads + adapters[2]!.loads, 0);
+
+    adapters[1]!.emitReady();
+    await tester.pumpAndSettle();
+    expect(adapters[0]!.loads + adapters[2]!.loads, 1, reason: 'one neighbour at a time');
+
+    (adapters[0]!.loads == 1 ? adapters[0]! : adapters[2]!).emitReady();
+    await tester.pumpAndSettle();
+    expect(adapters[0]!.loads + adapters[2]!.loads, 2);
+    expect(adapters[0]!.plays, isEmpty);
+    expect(adapters[2]!.plays, isEmpty);
+  });
+
+  testWidgets('opening the viewer loads the settled page first; neighbours wait for its first frame', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 2));
+    await tester.pumpAndSettle();
+    expect(adapters[0]!.loads, 1);
+    expect(adapters[1]!.loads, 0);
+
+    adapters[0]!.emitReady();
+    await tester.pumpAndSettle();
+    expect(adapters[1]!.loads, 1);
+  });
+
+  testWidgets('a neighbour still waiting to load loads at once when it becomes the settled page', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 2));
+    await tester.pumpAndSettle();
+    expect(adapters[1]!.loads, 0);
+
+    controller.jumpToPage(1);
+    await tester.pumpAndSettle();
+    expect(adapters[1]!.loads, 1);
+    expect(adapters[1]!.playing, isTrue);
   });
 
   testWidgets('swiping pauses the old page and plays the new one; swiping back resumes', (tester) async {

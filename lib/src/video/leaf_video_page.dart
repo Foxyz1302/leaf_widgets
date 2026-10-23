@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../viewer/leaf_chrome.dart';
 import '../viewer/leaf_viewer.dart';
 import '../viewer/leaf_viewer_internal.dart';
+import 'first_frame_gate.dart';
 import 'leaf_desktop_video_controls.dart';
 import 'leaf_video_adapter.dart';
 import 'leaf_video_controls.dart';
@@ -14,8 +15,10 @@ import 'leaf_video_controls.dart';
 /// apps don't rewrite it per project.
 ///
 /// Playback gating — the part every app gets wrong:
-/// - built as a neighbour page → loads and buffers, stays paused (prebuffer)
-/// - becomes the settled page → plays
+/// - built as a neighbour page → loads and buffers, stays paused (prebuffer);
+///   inside a [LeafViewer] neighbours take turns, one first-frame decode at a
+///   time, after the settled page
+/// - becomes the settled page → loads at once if it was still waiting, plays
 /// - stops being it, or the route gets covered, or the app backgrounds → pauses
 /// - uncovers / returns → resumes only if it was playing before; re-activating
 ///   (swiping back) always resumes, TikTok-style
@@ -68,6 +71,9 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   bool _loaded = false;
   bool _failed = false;
   bool _ready = false;
+  bool _started = false;
+  bool _loadIssued = false;
+  bool _holdsGate = false;
 
   bool _active = true;
   bool _coveredByRoute = false;
@@ -76,6 +82,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   bool _wasPlayingBeforeCover = false;
 
   LeafViewerChrome? _chrome;
+  FirstFrameGate? _gate;
   int? _pageIndex;
   ValueListenable<int>? _currentIndex;
   final _subs = <StreamSubscription<void>>[];
@@ -87,20 +94,54 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     _adapter = widget.createAdapter();
     _subs.add(_adapter.playingStream.listen(_onPlayingChanged));
     _subs.add(_adapter.readyStream.listen((_) {
+      _releaseGate();
       if (mounted) setState(() => _ready = true);
     }));
     _subs.add(_adapter.errorStream.listen((error) {
+      _releaseGate();
       if (!mounted) return;
       setState(() => _failed = true);
       _adapter.pause();
     }));
-    _load();
+  }
+
+  void _startLoad() {
+    final gate = _gate;
+    if (gate == null || _active) {
+      if (gate != null && gate.activeCount < gate.maxConcurrent) {
+        gate.enter();
+        _holdsGate = true;
+      }
+      _load();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _loadIssued) return;
+      gate.enter().then((_) {
+        if (!mounted || _loadIssued) {
+          gate.exit();
+          return;
+        }
+        _holdsGate = true;
+        _load();
+      });
+    });
+  }
+
+  void _releaseGate() {
+    if (!_holdsGate) return;
+    _holdsGate = false;
+    _gate?.exit();
   }
 
   Future<void> _load() async {
+    _loadIssued = true;
     try {
-      await _adapter.load(url: widget.url, headers: widget.headers);
+      final loading = _adapter.load(url: widget.url, headers: widget.headers);
+      if (!_active) _adapter.pause();
+      await loading;
     } catch (error) {
+      _releaseGate();
       if (!mounted) return;
       setState(() => _failed = true);
       return;
@@ -114,6 +155,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   void didChangeDependencies() {
     super.didChangeDependencies();
     _chrome = LeafViewer.chromeOf(context);
+    _gate = LeafViewerScope.maybeOf(context)?.firstFrameGate;
     _pageIndex = LeafPageIndexScope.maybeOf(context);
 
     final currentIndex = LeafViewer.currentIndexListOf(context);
@@ -122,6 +164,10 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
       _currentIndex = currentIndex;
       _currentIndex?.addListener(_onIndexChanged);
       _evaluateActive();
+    }
+    if (!_started) {
+      _started = true;
+      _startLoad();
     }
 
     // "Something is pushed on top of me" — sheets, pages, dialogs, anything.
@@ -169,7 +215,9 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
       // Release hold for the page leaving the stage; the active page's policy
       // owns it from here.
       _chrome?.hold = false;
-      _adapter.pause();
+      if (_loadIssued) _adapter.pause();
+    } else if (!_loadIssued) {
+      if (_started) _load();
     } else if (_loaded && !_failed && !_coveredByRoute && !_backgrounded) {
       _adapter.play();
     }
@@ -179,8 +227,8 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     final covered = _coveredByRoute || _backgrounded;
     if (covered) {
       if (_wasCovered) return;
-      _wasPlayingBeforeCover = _adapter.isPlaying;
-      _adapter.pause();
+      _wasPlayingBeforeCover = _loadIssued && _adapter.isPlaying;
+      if (_loadIssued) _adapter.pause();
     } else {
       if (!_wasCovered) return;
       if (_wasPlayingBeforeCover && _active && _loaded && !_failed) _adapter.play();
@@ -212,6 +260,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     }
     _currentIndex?.removeListener(_onIndexChanged);
     WidgetsBinding.instance.removeObserver(this);
+    _releaseGate();
     _adapter.dispose();
     super.dispose();
   }
