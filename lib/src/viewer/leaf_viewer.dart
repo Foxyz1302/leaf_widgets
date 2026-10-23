@@ -405,9 +405,10 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 /// LeafViewer keeps neighbour pages alive, so an unconditional hero on every
 /// page registers several per route — popping the viewer then flies the
 /// active page AND its neighbours back to the grid. This gates the hero on
-/// "this page is the settled one", so exactly one flight happens. The child
-/// instance is passed through untouched, so providers stay stable across
-/// page changes. Outside a viewer it behaves like a plain [Hero].
+/// "this page is the settled one" with a [HeroMode], so exactly one flight
+/// happens. Every page keeps the same tree shape, so the child's state
+/// (zoom, players, decoded images) survives page changes. Outside a viewer
+/// it behaves like a plain [Hero].
 class LeafViewerHero extends StatelessWidget {
   const LeafViewerHero({super.key, required this.tag, required this.child});
 
@@ -418,11 +419,12 @@ class LeafViewerHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final index = LeafViewer.pageIndexOf(context);
     final currentIndex = LeafViewer.currentIndexListOf(context);
-    if (index == null || currentIndex == null) return Hero(tag: tag, child: child);
+    final hero = Hero(tag: tag, child: child);
+    if (index == null || currentIndex == null) return hero;
     return ValueListenableBuilder<int>(
       valueListenable: currentIndex,
-      child: child,
-      builder: (context, current, child) => current == index ? Hero(tag: tag, child: child!) : child!,
+      child: hero,
+      builder: (context, current, hero) => HeroMode(enabled: current == index, child: hero!),
     );
   }
 }

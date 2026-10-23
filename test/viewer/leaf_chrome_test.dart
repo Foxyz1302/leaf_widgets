@@ -157,14 +157,64 @@ void main() {
         ),
       ));
       await tester.pumpAndSettle();
-      // Neighbours are alive but must not carry heroes.
-      expect(find.byType(Hero), findsOneWidget);
+      // Neighbours are alive but their heroes must not fly.
+      expect(_flightHeroTags(tester), ['post_0']);
       expect(find.byKey(const ValueKey('page-0')), findsOneWidget);
 
       controller.jumpToPage(1);
       await tester.pumpAndSettle();
-      expect(find.byType(Hero), findsOneWidget);
-      expect(tester.widget<Hero>(find.byType(Hero)).tag, 'post_1');
+      expect(_flightHeroTags(tester), ['post_1']);
+    });
+
+    testWidgets('page state survives the hero gate when the page changes', (tester) async {
+      final controller = PageController();
+      addTearDown(controller.dispose);
+      final inits = <int, int>{};
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafViewer(
+            pageCount: 3,
+            pageController: controller,
+            pageBuilder: (context, i) => LeafViewerHero(tag: 'post_$i', child: _InitCounter(index: i, inits: inits)),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      controller.jumpToPage(1);
+      await tester.pumpAndSettle();
+      controller.jumpToPage(0);
+      await tester.pumpAndSettle();
+      expect(inits, {0: 1, 1: 1, 2: 1});
+    });
+
+    testWidgets('popping the viewer flies only the active page back', (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(MaterialApp(
+        navigatorKey: navigator,
+        home: Scaffold(
+          body: Row(key: const ValueKey('grid'), children: [
+            for (var i = 0; i < 3; i++) Hero(tag: 'post_$i', child: SizedBox(width: 50, height: 50, key: ValueKey('grid-$i'))),
+          ]),
+        ),
+      ));
+      navigator.currentState!.push(MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          body: LeafViewer(
+            pageCount: 3,
+            pageBuilder: (context, i) => LeafViewerHero(tag: 'post_$i', child: SizedBox.expand(key: ValueKey('page-$i'))),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      navigator.currentState!.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      Finder inGrid(int i) => find.descendant(of: find.byKey(const ValueKey('grid')), matching: find.byKey(ValueKey('grid-$i')));
+      expect(inGrid(0), findsNothing);
+      expect(inGrid(1), findsOneWidget);
+      expect(inGrid(2), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(inGrid(0), findsOneWidget);
     });
 
     testWidgets('behaves like a plain hero outside a viewer', (tester) async {
@@ -182,4 +232,30 @@ void main() {
 String chromeState(BuildContext context) {
   final chrome = LeafViewer.chromeOf(context)!;
   return chrome.visible ? 'chrome: visible' : 'chrome: hidden';
+}
+
+List<Object> _flightHeroTags(WidgetTester tester) => [
+      for (final element in find.byType(Hero).evaluate())
+        if (element.findAncestorWidgetOfExactType<HeroMode>()?.enabled ?? true) (element.widget as Hero).tag,
+    ];
+
+class _InitCounter extends StatefulWidget {
+  const _InitCounter({required this.index, required this.inits});
+
+  final int index;
+  final Map<int, int> inits;
+
+  @override
+  State<_InitCounter> createState() => _InitCounterState();
+}
+
+class _InitCounterState extends State<_InitCounter> {
+  @override
+  void initState() {
+    super.initState();
+    widget.inits.update(widget.index, (v) => v + 1, ifAbsent: () => 1);
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
 }
