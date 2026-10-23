@@ -274,43 +274,45 @@ class _ScrubberState extends State<_Scrubber> {
       onHorizontalDragEnd: (_) {
         if (!_wasPaused) widget.adapter.play();
       },
-      child: SizedBox(
-        height: 20,
-        child: Center(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              return SizedBox(
-                height: height,
-                width: width,
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.all(radius),
-                  child: Stack(
-                    children: [
-                      Container(color: Colors.white12),
-                      StreamBuilder<Duration>(
-                        stream: widget.adapter.bufferStream,
-                        builder: (context, _) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 400),
-                          curve: Curves.fastEaseInToSlowEaseOut,
-                          width: (_fraction(widget.adapter.buffer) * width).clamp(0.0, width),
-                          color: Colors.white30,
+      child: RepaintBoundary(
+        child: SizedBox(
+          height: 20,
+          child: Center(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                return SizedBox(
+                  height: height,
+                  width: width,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.all(radius),
+                    child: Stack(
+                      children: [
+                        Container(color: Colors.white12),
+                        StreamBuilder<Duration>(
+                          stream: widget.adapter.bufferStream,
+                          builder: (context, _) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 400),
+                            curve: Curves.fastEaseInToSlowEaseOut,
+                            width: (_fraction(widget.adapter.buffer) * width).clamp(0.0, width),
+                            color: Colors.white30,
+                          ),
                         ),
-                      ),
-                      StreamBuilder<Duration>(
-                        stream: widget.adapter.positionStream,
-                        builder: (context, _) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          curve: Curves.fastEaseInToSlowEaseOut,
-                          width: (_fraction(widget.adapter.position) * width).clamp(0.0, width),
-                          color: Theme.of(context).colorScheme.primary,
+                        StreamBuilder<Duration>(
+                          stream: widget.adapter.positionStream,
+                          builder: (context, _) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            curve: Curves.fastEaseInToSlowEaseOut,
+                            width: (_fraction(widget.adapter.position) * width).clamp(0.0, width),
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),

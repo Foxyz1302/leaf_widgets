@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:leaf_widgets/leaf_widgets.dart';
@@ -11,6 +12,7 @@ class FakeAdapter extends VideoPlayerAdapter {
   bool disposed = false;
   bool playing = false;
   int loads = 0;
+  Duration currentPosition = Duration.zero;
 
   final plays = <int>[];
   final pauses = <int>[];
@@ -51,7 +53,7 @@ class FakeAdapter extends VideoPlayerAdapter {
   Stream<Object> get errorStream => _errorCtrl.stream;
 
   @override
-  Duration get position => Duration.zero;
+  Duration get position => currentPosition;
   @override
   Duration get duration => const Duration(seconds: 60);
   @override
@@ -191,6 +193,27 @@ void main() {
     chrome.show();
     await tester.pump();
     expect(find.text('00:00 / 01:00'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('scrubber ticks repaint the scrubber, not the whole control bar', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1, enableChrome: true));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!..currentPosition = const Duration(milliseconds: 500);
+    adapter.emitPosition(adapter.currentPosition);
+    await tester.pump();
+    var timeTextPaints = 0;
+    debugOnProfilePaint = (renderObject) {
+      if (renderObject is RenderParagraph && renderObject.text.toPlainText().contains(' / ')) timeTextPaints++;
+    };
+    try {
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    } finally {
+      debugOnProfilePaint = null;
+    }
+    expect(timeTextPaints, 0);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
