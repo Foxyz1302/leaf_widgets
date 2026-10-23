@@ -310,6 +310,27 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     final horizontal = widget.scrollDirection == Axis.horizontal;
     final desktop = leafIsDesktopPlatform();
     final swipeMode = _swipeMode;
+    final pager = ScrollConfiguration(
+      behavior: behavior.copyWith(
+        dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
+      ),
+      child: PageView.builder(
+        controller: _pageController,
+        physics: const PageScrollPhysics(),
+        scrollDirection: widget.scrollDirection,
+        // Keep adjacent pages alive so their zoom state
+        // survives swipes (and preloads neighbors).
+        allowImplicitScrolling: true,
+        itemCount: widget.pageCount,
+        onPageChanged: (index) {
+          widget.onPageChanged?.call(index);
+          _onPageIndexChanged(index);
+        },
+        itemBuilder: (context, index) {
+          return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
+        },
+      ),
+    );
     return Focus(
       focusNode: _focusNode,
       autofocus: widget.enableKeyboard,
@@ -318,82 +339,64 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
         registry: this,
         currentIndex: _indexNotifier,
         chrome: _chrome,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            _viewerSize = constraints.biggest;
-            final pager = ScrollConfiguration(
-              behavior: behavior.copyWith(
-                dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
-              ),
-              child: PageView.builder(
-                controller: _pageController,
-                physics: const PageScrollPhysics(),
-                scrollDirection: widget.scrollDirection,
-                // Keep adjacent pages alive so their zoom state
-                // survives swipes (and preloads neighbors).
-                allowImplicitScrolling: true,
-                itemCount: widget.pageCount,
-                onPageChanged: (index) {
-                  widget.onPageChanged?.call(index);
-                  _onPageIndexChanged(index);
-                },
-                itemBuilder: (context, index) {
-                  return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  _viewerSize = constraints.biggest;
+                  return const SizedBox.shrink();
                 },
               ),
-            );
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                if (widget.backgroundBuilder != null)
-                  AnimatedBuilder(
-                    animation: _dismissCtrl,
-                    builder: (context, _) => widget.backgroundBuilder!(context, _dismissProgress),
-                  ),
-                Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerSignal: _onPointerSignal,
-                  child: GestureDetector(
-                    onVerticalDragStart: horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
-                    onVerticalDragUpdate: horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
-                    onVerticalDragEnd: horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
-                    onHorizontalDragStart: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
-                    onHorizontalDragUpdate: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
-                    onHorizontalDragEnd: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
-                    onTapUp: _onTapUp,
-                    child: AnimatedBuilder(
-                      animation: _dismissCtrl,
-                      child: pager,
-                      builder: (context, child) => Transform.translate(
-                        offset: _dismissOffsetVector,
-                        child: Transform.scale(scale: 1.0 - _dismissProgress * 0.15, child: child),
-                      ),
-                    ),
+            ),
+            if (widget.backgroundBuilder != null)
+              AnimatedBuilder(
+                animation: _dismissCtrl,
+                builder: (context, _) => widget.backgroundBuilder!(context, _dismissProgress),
+              ),
+            Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerSignal: _onPointerSignal,
+              child: GestureDetector(
+                onVerticalDragStart: horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
+                onVerticalDragUpdate: horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
+                onVerticalDragEnd: horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
+                onHorizontalDragStart: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
+                onHorizontalDragUpdate: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
+                onHorizontalDragEnd: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
+                onTapUp: _onTapUp,
+                child: AnimatedBuilder(
+                  animation: _dismissCtrl,
+                  child: pager,
+                  builder: (context, child) => Transform.translate(
+                    offset: _dismissOffsetVector,
+                    child: Transform.scale(scale: 1.0 - _dismissProgress * 0.15, child: child),
                   ),
                 ),
-                if (widget.controlsBuilder != null)
-                  _chromeRevealed(
-                    ValueListenableBuilder<int>(
-                      valueListenable: _indexNotifier,
-                      builder: (context, index, _) => widget.controlsBuilder!(
-                        context,
-                        LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
-                      ),
-                    ),
-                  )
-                else if (desktop)
-                  _chromeRevealed(
-                    ValueListenableBuilder<int>(
-                      valueListenable: _indexNotifier,
-                      builder: (context, index, _) => _LeafViewerDefaultControls(
-                        controls: LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
-                        showPageCounter: widget.showPageCounter,
-                      ),
-                    ),
+              ),
+            ),
+            if (widget.controlsBuilder != null)
+              _chromeRevealed(
+                ValueListenableBuilder<int>(
+                  valueListenable: _indexNotifier,
+                  builder: (context, index, _) => widget.controlsBuilder!(
+                    context,
+                    LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
                   ),
-              ],
-            );
-          },
+                ),
+              )
+            else if (desktop)
+              _chromeRevealed(
+                ValueListenableBuilder<int>(
+                  valueListenable: _indexNotifier,
+                  builder: (context, index, _) => _LeafViewerDefaultControls(
+                    controls: LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
+                    showPageCounter: widget.showPageCounter,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

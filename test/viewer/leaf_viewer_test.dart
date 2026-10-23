@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:leaf_widgets/leaf_widgets.dart';
@@ -165,6 +166,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(frames, greaterThan(5));
     expect(counts, before);
+  });
+
+  testWidgets('a rebuild inside a page lays out nothing above the page', (tester) async {
+    final page = GlobalKey<_RebuildableState>();
+    await tester.pumpWidget(_harness(pageBuilder: (context, i) => i == 0 ? _Rebuildable(key: page) : const SizedBox.expand()));
+    final laidOut = <String>[];
+    final saved = debugPrint;
+    debugPrintLayouts = true;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null && message.startsWith('Laying out')) laidOut.add(message);
+    };
+    try {
+      page.currentState!.rebuild();
+      await tester.pump();
+    } finally {
+      debugPrint = saved;
+      debugPrintLayouts = false;
+    }
+    expect(laidOut, isEmpty);
   });
 
   testWidgets('1× vertical drag past 25% flies off and dismisses', (tester) async {
@@ -496,4 +516,18 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
   });
+}
+
+class _Rebuildable extends StatefulWidget {
+  const _Rebuildable({super.key});
+
+  @override
+  State<_Rebuildable> createState() => _RebuildableState();
+}
+
+class _RebuildableState extends State<_Rebuildable> {
+  void rebuild() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Color(0xFF112233));
 }
