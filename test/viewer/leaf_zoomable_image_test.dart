@@ -33,6 +33,26 @@ class _Ticking extends ImageStreamCompleter {
   }
 }
 
+class _StaticImage extends ImageProvider<_StaticImage> {
+  const _StaticImage(this.image, this.id);
+
+  final ui.Image image;
+  final String id;
+
+  @override
+  Future<_StaticImage> obtainKey(ImageConfiguration configuration) => SynchronousFuture(this);
+
+  @override
+  ImageStreamCompleter loadImage(_StaticImage key, ImageDecoderCallback decode) =>
+      OneFrameImageStreamCompleter(SynchronousFuture(ImageInfo(image: image.clone())));
+
+  @override
+  bool operator ==(Object other) => other is _StaticImage && other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
+
 Future<void> _unmount(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
   imageCache
@@ -42,6 +62,25 @@ Future<void> _unmount(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('LeafZoomable.image re-reads the size when its image changes', (tester) async {
+    final wide = (await tester.runAsync(() => createTestImage(width: 400, height: 200, cache: false)))!;
+    final tall = (await tester.runAsync(() => createTestImage(width: 200, height: 400, cache: false)))!;
+    Widget viewer(ImageProvider provider) => MaterialApp(
+          home: LeafViewer(pageCount: 1, pageBuilder: (context, i) => LeafZoomable.image(image: Image(image: provider))),
+        );
+    await tester.pumpWidget(viewer(_StaticImage(wide, 'wide')));
+    await tester.pump();
+    final zoom = LeafViewer.controllerOf(tester.element(find.byType(LeafZoomable)))!;
+    expect(zoom.childSize, const Size(800, 400));
+    expect(zoom.originalSize, const Size(400, 200));
+
+    await tester.pumpWidget(viewer(_StaticImage(tall, 'tall')));
+    await tester.pump();
+    expect(zoom.childSize, const Size(300, 600));
+    expect(zoom.originalSize, const Size(200, 400));
+    await _unmount(tester);
+  });
+
   testWidgets('LeafZoomable.image does not rebuild on every frame of an animated image', (tester) async {
     final frame = (await tester.runAsync(() => createTestImage(width: 320, height: 240, cache: false)))!;
     await tester.pumpWidget(MaterialApp(home: LeafZoomable.image(image: Image(image: _AnimatedImage(frame)))));

@@ -132,6 +132,12 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
         _unregister();
       }
     }
+    if (widget.image?.image != oldWidget.image?.image) {
+      _stopImageDimensions();
+      _decodedSize = null;
+      _imageResolved = widget.image != null;
+      if (_imageResolved) _resolveImageDimensions();
+    }
   }
 
   void _register() {
@@ -160,11 +166,16 @@ class _LeafZoomableState extends State<LeafZoomable> with TickerProviderStateMix
     _imageListener = listener;
   }
 
+  void _stopImageDimensions() {
+    final stream = _imageStream, listener = _imageListener;
+    if (stream != null && listener != null) stream.removeListener(listener);
+    _imageStream = null;
+    _imageListener = null;
+  }
+
   @override
   void dispose() {
-    if (_imageStream != null && _imageListener != null) {
-      _imageStream!.removeListener(_imageListener!);
-    }
+    _stopImageDimensions();
     _unregister();
     _controller.removeListener(_notifyZoom);
     _controller.dispose();
