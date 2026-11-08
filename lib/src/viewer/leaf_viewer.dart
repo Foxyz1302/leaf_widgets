@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../video/first_frame_gate.dart';
 import 'leaf_viewer_internal.dart';
 import 'leaf_chrome.dart';
+import 'leaf_hero_source.dart';
 import 'leaf_zoom_controller.dart';
 
 /// Fullscreen pager with per-page zoom, boundary-aware edge release and a
@@ -53,6 +54,8 @@ class LeafViewer extends StatefulWidget {
     this.enableKeyboard = true,
     this.enableChrome = false,
     this.showPageCounter = true,
+    this.heroSource,
+    this.heroTagOf,
   });
 
   final int pageCount;
@@ -103,6 +106,13 @@ class LeafViewer extends StatefulWidget {
   /// Whether the default control set shows the "current / total" counter.
   /// Meaningless with huge page counts — turn off there.
   final bool showPageCounter;
+
+  /// Set to [heroTagOf] of the settled page each time a page settles, so the
+  /// opening grid hides the tile the return flight lands on.
+  final LeafHeroSource? heroSource;
+
+  /// The hero tag of page `index` (null for pages without one).
+  final Object? Function(int index)? heroTagOf;
 
   /// The zoom controller of the currently active page, if any.
   static LeafZoomController? controllerOf(BuildContext context) {
@@ -216,12 +226,18 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _currentIndex = widget.pageController?.initialPage ?? widget.initialPage;
     _indexNotifier.value = _currentIndex;
     _settledIndex.value = _currentIndex;
+    _settledIndex.addListener(_onSettled);
     _pageController = widget.pageController ?? PageController(initialPage: _currentIndex);
     _dismissCtrl = AnimationController.unbounded(vsync: this)
       ..addListener(() => _dismissProgressNotifier.value = _dismissProgress);
     if (widget.enableChrome) {
       _chrome = LeafViewerChrome(autoHide: !leafIsDesktopPlatform());
     }
+  }
+
+  void _onSettled() {
+    final source = widget.heroSource, tagOf = widget.heroTagOf;
+    if (source != null && tagOf != null && !source.returning) source.value = tagOf(_settledIndex.value);
   }
 
   @override

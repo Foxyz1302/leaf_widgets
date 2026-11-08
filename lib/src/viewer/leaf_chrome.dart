@@ -28,6 +28,7 @@ class LeafViewerChrome {
 
   final ValueNotifier<bool> _visible = ValueNotifier<bool>(true);
   bool _hold = false;
+  final _holders = <Object>{};
   bool _disposed = false;
   Timer? _timer;
 
@@ -55,9 +56,16 @@ class LeafViewerChrome {
     value ? _cancelTimer() : _restartTimer();
   }
 
+  /// Holds chrome up for [who] (a set, independent of [hold], which the
+  /// active media page owns), e.g. an expanded panel.
+  void holdFor(Object who, bool on) {
+    if (_disposed || !(on ? _holders.add(who) : _holders.remove(who))) return;
+    _holders.isNotEmpty ? _cancelTimer() : _restartTimer();
+  }
+
   void _restartTimer() {
     _cancelTimer();
-    if (!autoHide || _hold || !_visible.value) return;
+    if (!autoHide || _hold || _holders.isNotEmpty || !_visible.value) return;
     _timer = Timer(hideDelay, () => _visible.value = false);
   }
 

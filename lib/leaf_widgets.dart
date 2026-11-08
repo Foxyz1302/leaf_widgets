@@ -38,6 +38,7 @@ export 'src/video/leaf_video_controls.dart';
 export 'src/video/video_lifecycle.dart';
 export 'src/video/leaf_video_page.dart';
 export 'src/viewer/leaf_chrome.dart';
+export 'src/viewer/leaf_hero_source.dart';
 export 'src/viewer/leaf_viewer.dart';
 export 'src/viewer/leaf_zoom_controller.dart';
 export 'src/viewer/leaf_zoomable.dart';
