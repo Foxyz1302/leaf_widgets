@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../viewer/leaf_chrome.dart';
 import '../../viewer/leaf_viewer_internal.dart';
 import 'items/leaf_control.dart';
 import 'items/play_items.dart';
@@ -23,7 +24,12 @@ import 'media_math.dart';
 /// wheel and the cursor.
 ///
 /// Inside a [LeafViewer] it builds only on the settled page; on touch, in a
-/// chrome-enabled viewer, it shows and hides with the viewer's chrome.
+/// chrome-enabled viewer (or with [chrome]), it shows and hides with that
+/// chrome.
+///
+/// Detached (outside the pager, see [LeafDetachedControls]): [picture] false
+/// leaves the picture's gestures to the page ([LeafPlayerGestures]) and lets
+/// pointers between the controls through.
 class LeafPlayerControls extends StatefulWidget {
   const LeafPlayerControls({
     super.key,
@@ -32,9 +38,17 @@ class LeafPlayerControls extends StatefulWidget {
     this.isFullscreen = false,
     this.suppress,
     this.holdBy,
+    this.picture = true,
+    this.chrome,
   });
 
   final LeafPlayerController controller;
+
+  /// Whether the controls own the picture's taps and double-taps.
+  final bool picture;
+
+  /// Shows and hides with this chrome on touch (else the enclosing viewer's).
+  final LeafViewerChrome? chrome;
 
   /// Null: [LeafPlayerDefaults]'s, else [LeafControlsSpec.adaptive].
   final LeafControlsSpec? spec;
@@ -113,7 +127,9 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
     if (oldWidget.controller != widget.controller ||
         oldWidget.spec != widget.spec ||
         oldWidget.isFullscreen != widget.isFullscreen ||
-        oldWidget.suppress != widget.suppress) {
+        oldWidget.suppress != widget.suppress ||
+        oldWidget.picture != widget.picture ||
+        oldWidget.chrome != widget.chrome) {
       _built = null;
       _ensureVisibility(force: oldWidget.suppress != widget.suppress || oldWidget.spec != widget.spec);
     }
@@ -165,7 +181,7 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
   }
 
   void _ensureVisibility({bool force = false}) {
-    final chrome = _viewer?.chrome;
+    final chrome = widget.chrome ?? _viewer?.chrome;
     final useChrome = chrome != null && !_desktop && !widget.isFullscreen;
     final current = _visibility;
     final fits = useChrome
@@ -465,7 +481,7 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
     final stack = Stack(
       fit: StackFit.expand,
       children: [
-        picture,
+        if (widget.picture) picture,
         if (whenHiddenItems.isNotEmpty)
           Positioned(
             left: 0,

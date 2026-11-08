@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../viewer/leaf_viewer_internal.dart';
 import 'leaf_controls_spec.dart';
+import 'leaf_detached_controls.dart';
 import 'leaf_fullscreen.dart';
 import 'leaf_player_controller.dart';
 import 'leaf_player_controls.dart';
@@ -30,6 +31,7 @@ class LeafPlayerView extends StatefulWidget {
     this.fullscreenDelegate,
     this.onRetry,
     this.onFullscreenRoute,
+    this.detachedControls = false,
   });
 
   final LeafPlayerController controller;
@@ -61,6 +63,11 @@ class LeafPlayerView extends StatefulWidget {
   /// another route ([covered]): the page's pause-when-covered policy looks at
   /// that route instead of its own while it is up.
   final void Function(bool active, bool covered)? onFullscreenRoute;
+
+  /// Inline, only the picture's gestures ([LeafPlayerGestures]): an app layer
+  /// draws the controls ([LeafDetachedControls]). The fullscreen route still
+  /// draws its own.
+  final bool detachedControls;
 
   @override
   State<LeafPlayerView> createState() => _LeafPlayerViewState();
@@ -217,11 +224,13 @@ class _LeafPlayerViewState extends State<LeafPlayerView> implements LeafFullscre
         ...widget.underlay,
         ValueListenableBuilder<bool>(
           valueListenable: _ctrl.fullscreen,
-          builder: (context, full, _) => LeafPlayerControls(
-            controller: _ctrl,
-            spec: widget.spec,
-            isFullscreen: full && _mode == LeafFullscreenMode.inPlace,
-          ),
+          builder: (context, full, _) => widget.detachedControls
+              ? LeafPlayerGestures(controller: _ctrl, spec: widget.spec, isFullscreen: full && _mode == LeafFullscreenMode.inPlace)
+              : LeafPlayerControls(
+                  controller: _ctrl,
+                  spec: widget.spec,
+                  isFullscreen: full && _mode == LeafFullscreenMode.inPlace,
+                ),
         ),
       ],
     );

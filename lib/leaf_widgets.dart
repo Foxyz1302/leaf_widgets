@@ -23,6 +23,7 @@ export 'src/video/controls/leaf_controls_layout.dart';
 export 'src/video/controls/leaf_controls_spec.dart';
 export 'src/video/controls/leaf_controls_theme.dart';
 export 'src/video/controls/leaf_controls_visibility.dart';
+export 'src/video/controls/leaf_detached_controls.dart';
 export 'src/video/controls/leaf_fullscreen.dart';
 export 'src/video/controls/leaf_player_controls.dart';
 export 'src/video/controls/leaf_player_defaults.dart';

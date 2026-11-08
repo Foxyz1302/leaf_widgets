@@ -55,6 +55,8 @@ class LeafVideoPage extends StatefulWidget {
     this.actions,
     this.fullscreenDelegate,
     this.fullscreenMode,
+    this.detachedControls = false,
+    this.onController,
   }) : assert(controls == null || controlsBuilder == null, 'Pass either controls (the kit) or controlsBuilder, not both');
 
   /// Creates the (unloaded) adapter. Called once per page state; the page owns
@@ -107,6 +109,17 @@ class LeafVideoPage extends StatefulWidget {
   /// adapter from [createAdapter] keeps it; the app going to the background
   /// disposes whatever is still pending. Off by default.
   final bool deferDispose;
+
+  /// With the kit: the page draws the surface and the picture's gestures only
+  /// and hands its controller out through [onController], for controls drawn
+  /// outside the pager ([LeafDetachedControls]) that stay put while pages
+  /// slide or dismiss.
+  final bool detachedControls;
+
+  /// The kit's controller came (`attached`) or is going (`!attached`; the
+  /// page disposes it and the adapter one frame later, so a layer holding it
+  /// rebuilds without it first). Called after a frame, never during a build.
+  final void Function(LeafPlayerController controller, bool attached)? onController;
 
   @override
   State<LeafVideoPage> createState() => _LeafVideoPageState();
@@ -254,8 +267,14 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
       return;
     }
     if (adapter == null || _kit != null) return;
-    _kit = LeafPlayerController(adapter, actions: widget.actions ?? const LeafPlayerActions(), prefs: defaults?.prefs)
+    final kit = _kit = LeafPlayerController(adapter, actions: widget.actions ?? const LeafPlayerActions(), prefs: defaults?.prefs)
       ..source = widget.url;
+    final notify = widget.onController;
+    if (notify != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && identical(_kit, kit)) notify(kit, true);
+      });
+    }
   }
 
   void _onFullscreenRoute(bool active, bool covered) {
@@ -403,10 +422,27 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     if (teardown != null) {
       // The fullscreen route still holds the surface: dispose once it is gone.
       if (_loadIssued && adapter != null) scheduleMicrotask(adapter.pause);
+      final notify = widget.onController;
+      if (notify != null) WidgetsBinding.instance.addPostFrameCallback((_) => notify(kit!, false));
       teardown.then((_) {
         kit!.dispose();
         adapter?.dispose();
       });
+    } else if (kit != null && widget.onController != null) {
+      // A layer outside the page holds the controller: it lets go first.
+      final notify = widget.onController!;
+      final deferDispose = widget.deferDispose;
+      if (_loadIssued && adapter != null) adapter.pause();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        notify(kit, false);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          kit.dispose();
+          if (adapter == null) return;
+          deferDispose ? _PendingDisposals.instance.add(adapter) : adapter.dispose();
+        });
+        WidgetsBinding.instance.scheduleFrame();
+      });
+      WidgetsBinding.instance.scheduleFrame();
     } else {
       kit?.dispose();
       if (adapter != null) {
@@ -502,6 +538,7 @@ extension on _LeafVideoPageState {
               : widget.fullscreenDelegate,
           onRetry: _retry,
           onFullscreenRoute: _onFullscreenRoute,
+          detachedControls: widget.detachedControls,
         ),
         if (_failed)
           ColoredBox(
