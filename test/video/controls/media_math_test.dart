@@ -129,4 +129,57 @@ void main() {
     expect(const LeafTrack(id: '3', kind: LeafTrackKind.subtitle).label, 'Track 3');
     expect(const LeafTracks(audio: [a], selectedAudio: '1'), const LeafTracks(audio: [a], selectedAudio: '1'));
   });
+
+  group('fitBar', () {
+    const play = LeafFitItem('playPause', 48, priority: 1000);
+    const volume = LeafFitItem('volume', 48, priority: 40, sliderWidth: 72);
+    const time = LeafFitItem('time', 110, priority: 1000, compactWidth: 60);
+    const subs = LeafFitItem('subtitles', 48, priority: 30);
+    const speed = LeafFitItem('speed', 48, priority: 20);
+    const fullscreen = LeafFitItem('fullscreen', 48, priority: 1000);
+    LeafFitResult fit(double width) =>
+        fitBar(start: [play, volume, time], end: [subs, speed, fullscreen], width: width, overflowWidth: 48);
+
+    test('wide: everything, the slider beside the speaker', () {
+      final r = fit(800);
+      expect(r.shown.length, 6);
+      expect(r.overflow, isEmpty);
+      expect(r.slider, const LeafSliderRoom(beside: true, width: 72));
+      expect(r.compactTime, isFalse);
+    });
+
+    test('a bit narrower: the slider slides out on hover with the room left', () {
+      final r = fit(400);
+      expect(r.overflow, isEmpty);
+      expect(r.slider.beside, isFalse);
+      expect(r.slider.width, 400 - 350);
+      expect(r.compactTime, isFalse);
+    });
+
+    test('narrower: no slider, then the clock compacts', () {
+      expect(fit(352).slider, LeafSliderRoom.none);
+      expect(fit(352).compactTime, isFalse);
+      final r = fit(320);
+      expect(r.compactTime, isTrue);
+      expect(r.overflow, isEmpty);
+    });
+
+    test('narrowest: items drop into the overflow by priority, never the pinned ones', () {
+      final r = fit(260);
+      expect(r.overflow, ['subtitles', 'speed']);
+      expect(r.shown, containsAll(['playPause', 'time', 'fullscreen', 'volume']));
+      final tiny = fit(100);
+      expect(tiny.shown, {'playPause', 'time', 'fullscreen'});
+      expect(tiny.overflow, ['volume', 'subtitles', 'speed']);
+    });
+
+    test('equal priorities drop from the end of the bar first', () {
+      final r = fitBar(
+        start: const [LeafFitItem('a', 50), LeafFitItem('b', 50)],
+        end: const [LeafFitItem('c', 50)],
+        width: 100,
+      );
+      expect(r.overflow, ['c']);
+    });
+  });
 }

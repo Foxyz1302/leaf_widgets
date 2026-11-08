@@ -197,3 +197,115 @@ String? cacheLabel({
 /// line) and shown (1, [size] at [scale]).
 double bandSize(double visibility, double scale, {double size = 36, double lineSize = 3}) =>
     lineSize + ((size * scale - lineSize) * visibility).roundToDouble();
+
+/// One bar item for [fitBar]: its width as drawn, the volume slider's room
+/// beside it ([sliderWidth], volume only) and its width compacted
+/// ([compactWidth], the clock showing elapsed only).
+@immutable
+class LeafFitItem {
+  const LeafFitItem(this.id, this.width, {this.priority = 50, this.sliderWidth = 0, this.compactWidth});
+
+  final String id;
+  final double width;
+
+  /// The lowest drops into ⋯ first; 1000 and above never drop.
+  final int priority;
+  final double sliderWidth;
+  final double? compactWidth;
+}
+
+/// Where the volume slider goes: beside the speaker ([beside], [width]
+/// wide), sliding out on hover ([width] wide), or nowhere ([width] 0; the
+/// wheel and keys still set it).
+@immutable
+class LeafSliderRoom {
+  const LeafSliderRoom({required this.beside, required this.width});
+
+  static const none = LeafSliderRoom(beside: false, width: 0);
+
+  final bool beside;
+  final double width;
+
+  @override
+  bool operator ==(Object other) => other is LeafSliderRoom && other.beside == beside && other.width == width;
+
+  @override
+  int get hashCode => Object.hash(beside, width);
+
+  @override
+  String toString() => 'LeafSliderRoom(${beside ? 'beside' : 'hover'} $width)';
+}
+
+/// What a bar shows at its width.
+@immutable
+class LeafFitResult {
+  const LeafFitResult({required this.shown, required this.overflow, required this.slider, required this.compactTime});
+
+  final Set<String> shown;
+
+  /// Dropped items, in bar order.
+  final List<String> overflow;
+  final LeafSliderRoom slider;
+  final bool compactTime;
+}
+
+/// Under this the hover slider is not worth showing.
+const _minSlider = 32.0;
+
+/// Fits a bar of [width]. It gives up room in this order: the volume slider
+/// slides out on hover instead of sitting beside the speaker (sync_relay's
+/// `volumeSliderRoom`), the clock compacts to elapsed only, then items drop
+/// into ⋯ ([overflowWidth] is its button) by ascending priority, the bar's
+/// end first among equals.
+LeafFitResult fitBar({
+  List<LeafFitItem> start = const [],
+  List<LeafFitItem> center = const [],
+  List<LeafFitItem> end = const [],
+  required double width,
+  double overflowWidth = 0,
+}) {
+  final all = [...start, ...center, ...end];
+  final kept = {for (final i in all) i.id};
+  final slider = all.map((i) => i.sliderWidth).fold(0.0, (a, b) => a > b ? a : b);
+  var compact = false;
+  double used() {
+    var sum = 0.0;
+    for (final i in all) {
+      if (!kept.contains(i.id)) continue;
+      sum += compact ? (i.compactWidth ?? i.width) : i.width;
+    }
+    if (kept.length < all.length) sum += overflowWidth;
+    return sum;
+  }
+
+  LeafFitResult result() {
+    final hasVolume = all.any((i) => i.sliderWidth > 0 && kept.contains(i.id));
+    final spare = width - used();
+    final room = !hasVolume
+        ? LeafSliderRoom.none
+        : spare >= slider
+        ? LeafSliderRoom(beside: true, width: slider)
+        : (spare < _minSlider ? LeafSliderRoom.none : LeafSliderRoom(beside: false, width: spare));
+    return LeafFitResult(
+      shown: Set.unmodifiable(kept),
+      overflow: List.unmodifiable([for (final i in all) if (!kept.contains(i.id)) i.id]),
+      slider: room,
+      compactTime: compact,
+    );
+  }
+
+  if (used() <= width) return result();
+  if (all.any((i) => i.compactWidth != null)) {
+    compact = true;
+    if (used() <= width) return result();
+  }
+  final droppable = [
+    for (var k = 0; k < all.length; k++)
+      if (all[k].priority < 1000) (k, all[k]),
+  ]..sort((a, b) => a.$2.priority != b.$2.priority ? a.$2.priority.compareTo(b.$2.priority) : b.$1.compareTo(a.$1));
+  for (final (_, item) in droppable) {
+    if (used() <= width) break;
+    kept.remove(item.id);
+  }
+  return result();
+}
