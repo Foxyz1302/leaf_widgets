@@ -90,6 +90,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   ValueListenable<bool>? _waitForIdle;
   bool _loaded = false;
   bool _failed = false;
+  Duration? _failedAt;
   bool _ready = false;
   bool _started = false;
   bool _loadIssued = false;
@@ -121,14 +122,27 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     _subs.add(adapter.playingStream.listen(_onPlayingChanged));
     _subs.add(adapter.readyStream.listen((_) {
       _releaseGate();
-      if (mounted) setState(() => _ready = true);
+      if (mounted) {
+        setState(() {
+          _ready = true;
+          _failed = false;
+        });
+      }
     }));
     _subs.add(adapter.errorStream.listen((error) {
       _releaseGate();
       if (!mounted) return;
+      _failedAt = adapter.position;
       setState(() => _failed = true);
-      adapter.pause();
     }));
+    _subs.add(adapter.positionStream.listen(_onPosition));
+  }
+
+  void _onPosition(Duration position) {
+    if (!_failed || !mounted) return;
+    final failedAt = _failedAt;
+    if (failedAt != null && position <= failedAt) return;
+    setState(() => _failed = false);
   }
 
   void _onScrolling() {
@@ -183,6 +197,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     } catch (error) {
       _releaseGate();
       if (!mounted) return;
+      _failedAt = adapter.position;
       setState(() => _failed = true);
       return;
     }

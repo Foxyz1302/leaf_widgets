@@ -42,6 +42,8 @@ class FakeAdapter extends VideoPlayerAdapter {
 
   void emitPosition(Duration value) => _positionCtrl.add(value);
 
+  void emitError(Object error) => _errorCtrl.add(error);
+
   @override
   Stream<Duration> get positionStream => _positionCtrl.stream;
   @override
@@ -329,6 +331,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Tap to retry'), findsNothing);
     expect(adapters[0]!.plays.length, 1);
+  });
+
+  testWidgets('an error clears once playback goes on: the position advances or a first frame shows', (tester) async {
+    await tester.pumpWidget(harness(pageCount: 1));
+    await tester.pumpAndSettle();
+    final adapter = adapters[0]!..currentPosition = const Duration(seconds: 2);
+
+    adapter.emitError('decoder hiccup');
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsOneWidget);
+    expect(adapter.pauses, isEmpty);
+
+    adapter.emitPosition(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsOneWidget);
+
+    adapter.emitPosition(const Duration(milliseconds: 2100));
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsNothing);
+
+    adapter.emitError('another hiccup');
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsOneWidget);
+    adapter.emitReady();
+    await tester.pumpAndSettle();
+    expect(find.text('Tap to retry'), findsNothing);
   });
 
   testWidgets('chrome policy: pause shows and holds chrome, playing releases the hold', (tester) async {
