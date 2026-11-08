@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../video/first_frame_gate.dart';
 import 'leaf_chrome.dart';
 import 'leaf_zoom_controller.dart';
 
@@ -25,18 +26,31 @@ abstract class LeafViewerRegistry {
 }
 
 /// Internal: registry scope shared between [LeafViewer], [LeafZoomable] and
-/// the video pages. Carries the viewer's outward state: the active page index
-/// and, when enabled, the chrome reveal controller.
+/// the video pages. Carries the viewer's outward state: the settled page
+/// index, the gate that staggers video first frames and, when enabled, the
+/// chrome reveal controller.
 class LeafViewerScope extends InheritedWidget {
-  const LeafViewerScope({required this.registry, required this.currentIndex, this.chrome, super.key, required super.child});
+  const LeafViewerScope({
+    required this.registry,
+    required this.currentIndex,
+    this.chrome,
+    this.firstFrameGate,
+    super.key,
+    required super.child,
+  });
 
   final LeafViewerRegistry registry;
 
-  /// The currently settled page index (reactive; also drives the controls).
+  /// The page the pager last came to rest on (reactive): flips when a swipe
+  /// settles, not at its midpoint. The paging controls follow the nearest
+  /// page instead.
   final ValueListenable<int> currentIndex;
 
   /// Reveal state for chrome layers; null unless the viewer enabled chrome.
   final LeafViewerChrome? chrome;
+
+  /// Lets one neighbour video at a time do its first-frame decode.
+  final FirstFrameGate? firstFrameGate;
 
   static LeafViewerScope? maybeOf(BuildContext context) {
     return context.dependOnInheritedWidgetOfExactType<LeafViewerScope>();

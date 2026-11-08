@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:leaf_widgets/leaf_widgets.dart';
@@ -9,6 +10,7 @@ import 'package:leaf_widgets/leaf_widgets.dart';
 class FakeAdapter extends VideoPlayerAdapter {
   bool playing = false;
   bool disposed = false;
+  Duration currentPosition = Duration.zero;
 
   final _positionCtrl = StreamController<Duration>.broadcast();
   final _bufferCtrl = StreamController<Duration>.broadcast();
@@ -27,6 +29,11 @@ class FakeAdapter extends VideoPlayerAdapter {
     _playingCtrl.add(value);
   }
 
+  void emitPosition(Duration value) {
+    currentPosition = value;
+    _positionCtrl.add(value);
+  }
+
   @override
   Stream<Duration> get positionStream => _positionCtrl.stream;
   @override
@@ -39,7 +46,7 @@ class FakeAdapter extends VideoPlayerAdapter {
   Stream<Object> get errorStream => _errorCtrl.stream;
 
   @override
-  Duration get position => Duration.zero;
+  Duration get position => currentPosition;
   @override
   Duration get duration => const Duration(seconds: 60);
   @override
@@ -130,6 +137,58 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 600));
     expect(barOf(tester).opacity, 0.0);
+  });
+
+  testWidgets('hidden bar is dropped after its fade-out: nothing ticks while playing, back on activity', (tester) async {
+    final adapter = FakeAdapter()..playing = true;
+    await tester.pumpWidget(harness(adapter));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    expect(barOf(tester).opacity, 0.0);
+    expect(find.byType(LeafScrubber), findsNothing);
+
+    adapter.emitPosition(const Duration(seconds: 2));
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.moveTo(const Offset(400, 300));
+    await tester.pump();
+    expect(barOf(tester).opacity, 1.0);
+    expect(find.byType(LeafScrubber), findsOneWidget);
+  });
+
+  testWidgets('a scrubber tick lays out and repaints nothing above the scrubber', (tester) async {
+    final adapter = FakeAdapter()..playing = true;
+    await tester.pumpWidget(harness(adapter, hideDelay: const Duration(hours: 1)));
+    await tester.pump();
+    adapter.emitPosition(const Duration(seconds: 20));
+    await tester.pump();
+    await tester.pump();
+
+    final laidOut = <String>[];
+    var timeTextPaints = 0;
+    final saved = debugPrint;
+    debugPrintLayouts = true;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null && message.startsWith('Laying out')) laidOut.add(message);
+    };
+    debugOnProfilePaint = (renderObject) {
+      if (renderObject is RenderParagraph && renderObject.text.toPlainText().contains(' / ')) timeTextPaints++;
+    };
+    try {
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    } finally {
+      debugPrint = saved;
+      debugPrintLayouts = false;
+      debugOnProfilePaint = null;
+    }
+    expect(laidOut, isEmpty);
+    expect(timeTextPaints, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('volume UI only with HasVolume; mute toggles', (tester) async {

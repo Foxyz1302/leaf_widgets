@@ -5,6 +5,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart' show RenderViewportBase;
 import 'package:flutter/services.dart';
 
+import '../video/first_frame_gate.dart';
 import 'leaf_viewer_internal.dart';
 import 'leaf_chrome.dart';
 import 'leaf_zoom_controller.dart';
@@ -99,7 +100,9 @@ class LeafViewer extends StatefulWidget {
     return LeafPageIndexScope.maybeOf(context);
   }
 
-  /// Reactive index of the currently settled page, if inside a viewer.
+  /// Reactive index of the currently settled page, if inside a viewer: it
+  /// changes when a swipe or [LeafViewerControls.goToPage] comes to rest on
+  /// a page, not when a swipe passes the midpoint (that is [onPageChanged]).
   static ValueListenable<int>? currentIndexListOf(BuildContext context) {
     return LeafViewerScope.maybeOf(context)?.currentIndex;
   }
@@ -132,6 +135,8 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
   late final AnimationController _dismissCtrl;
   final Map<int, LeafZoomController> _controllers = {};
   final ValueNotifier<int> _indexNotifier = ValueNotifier(0);
+  final ValueNotifier<int> _settledIndex = ValueNotifier(0);
+  final FirstFrameGate _firstFrameGate = FirstFrameGate(maxConcurrent: 1);
   final FocusNode _focusNode = FocusNode();
 
   int _currentIndex = 0;
@@ -176,11 +181,9 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     super.initState();
     _currentIndex = widget.pageController?.initialPage ?? widget.initialPage;
     _indexNotifier.value = _currentIndex;
+    _settledIndex.value = _currentIndex;
     _pageController = widget.pageController ?? PageController(initialPage: _currentIndex);
-    _dismissCtrl = AnimationController.unbounded(vsync: this)
-      ..addListener(() {
-        if (mounted) setState(() {});
-      });
+    _dismissCtrl = AnimationController.unbounded(vsync: this);
     if (widget.enableChrome) {
       _chrome = LeafViewerChrome(autoHide: !leafIsDesktopPlatform());
     }
@@ -191,6 +194,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _focusNode.dispose();
     _dismissCtrl.dispose();
     _indexNotifier.dispose();
+    _settledIndex.dispose();
     _chrome?.dispose();
     if (widget.pageController == null) _pageController.dispose();
     super.dispose();
@@ -210,6 +214,15 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 
   @override
   LeafZoomController? get activeController => _controllers[_currentIndex];
+
+  bool _onScrollEnd(ScrollEndNotification notification) {
+    final metrics = notification.metrics;
+    if (notification.depth == 0 && metrics is PageMetrics) {
+      final page = metrics.page;
+      if (page != null && (page - page.round()).abs() < 0.01) _settledIndex.value = page.round();
+    }
+    return false;
+  }
 
   void _onPageIndexChanged(int index) {
     _currentIndex = index;
@@ -309,89 +322,101 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 
   @override
   Widget build(BuildContext context) {
-    final progress = _dismissProgress;
     final behavior = ScrollConfiguration.of(context);
     final horizontal = widget.scrollDirection == Axis.horizontal;
     final desktop = leafIsDesktopPlatform();
     final swipeMode = _swipeMode;
+    final pager = ScrollConfiguration(
+      behavior: behavior.copyWith(
+        dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
+      ),
+      child: NotificationListener<ScrollEndNotification>(
+        onNotification: _onScrollEnd,
+        child: PageView.builder(
+          controller: _pageController,
+          physics: const PageScrollPhysics(),
+          scrollDirection: widget.scrollDirection,
+          // Keep adjacent pages alive so their zoom state
+          // survives swipes (and preloads neighbors).
+          allowImplicitScrolling: true,
+          itemCount: widget.pageCount,
+          onPageChanged: (index) {
+            widget.onPageChanged?.call(index);
+            _onPageIndexChanged(index);
+          },
+          itemBuilder: (context, index) {
+            return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
+          },
+        ),
+      ),
+    );
     return Focus(
       focusNode: _focusNode,
       autofocus: widget.enableKeyboard,
       onKeyEvent: widget.enableKeyboard ? _onKeyEvent : null,
       child: LeafViewerScope(
         registry: this,
-        currentIndex: _indexNotifier,
+        currentIndex: _settledIndex,
         chrome: _chrome,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            _viewerSize = constraints.biggest;
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                if (widget.backgroundBuilder != null) widget.backgroundBuilder!(context, progress),
-                Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerSignal: _onPointerSignal,
-                  child: GestureDetector(
-                    onVerticalDragStart: horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
-                    onVerticalDragUpdate: horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
-                    onVerticalDragEnd: horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
-                    onHorizontalDragStart: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
-                    onHorizontalDragUpdate: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
-                    onHorizontalDragEnd: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
-                    onTapUp: _onTapUp,
-                    child: Transform.translate(
-                      offset: _dismissOffsetVector,
-                      child: Transform.scale(
-                        scale: 1.0 - _dismissProgress * 0.15,
-                        child: ScrollConfiguration(
-                          behavior: behavior.copyWith(
-                            dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
-                          ),
-                          child: PageView.builder(
-                            controller: _pageController,
-                            physics: const PageScrollPhysics(),
-                            scrollDirection: widget.scrollDirection,
-                            // Keep adjacent pages alive so their zoom state
-                            // survives swipes (and preloads neighbors).
-                            allowImplicitScrolling: true,
-                            itemCount: widget.pageCount,
-                            onPageChanged: (index) {
-                              widget.onPageChanged?.call(index);
-                              _onPageIndexChanged(index);
-                            },
-                            itemBuilder: (context, index) {
-                              return LeafPageIndexScope(index: index, child: widget.pageBuilder(context, index));
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
+        firstFrameGate: _firstFrameGate,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  _viewerSize = constraints.biggest;
+                  return const SizedBox.shrink();
+                },
+              ),
+            ),
+            if (widget.backgroundBuilder != null)
+              AnimatedBuilder(
+                animation: _dismissCtrl,
+                builder: (context, _) => widget.backgroundBuilder!(context, _dismissProgress),
+              ),
+            Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerSignal: _onPointerSignal,
+              child: GestureDetector(
+                onVerticalDragStart: horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
+                onVerticalDragUpdate: horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
+                onVerticalDragEnd: horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
+                onHorizontalDragStart: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
+                onHorizontalDragUpdate: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
+                onHorizontalDragEnd: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
+                onTapUp: _onTapUp,
+                child: AnimatedBuilder(
+                  animation: _dismissCtrl,
+                  child: pager,
+                  builder: (context, child) => Transform.translate(
+                    offset: _dismissOffsetVector,
+                    child: Transform.scale(scale: 1.0 - _dismissProgress * 0.15, child: child),
                   ),
                 ),
-                if (widget.controlsBuilder != null)
-                  _chromeRevealed(
-                    ValueListenableBuilder<int>(
-                      valueListenable: _indexNotifier,
-                      builder: (context, index, _) => widget.controlsBuilder!(
-                        context,
-                        LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
-                      ),
-                    ),
-                  )
-                else if (desktop)
-                  _chromeRevealed(
-                    ValueListenableBuilder<int>(
-                      valueListenable: _indexNotifier,
-                      builder: (context, index, _) => _LeafViewerDefaultControls(
-                        controls: LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
-                        showPageCounter: widget.showPageCounter,
-                      ),
-                    ),
+              ),
+            ),
+            if (widget.controlsBuilder != null)
+              _chromeRevealed(
+                ValueListenableBuilder<int>(
+                  valueListenable: _indexNotifier,
+                  builder: (context, index, _) => widget.controlsBuilder!(
+                    context,
+                    LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
                   ),
-              ],
-            );
-          },
+                ),
+              )
+            else if (desktop)
+              _chromeRevealed(
+                ValueListenableBuilder<int>(
+                  valueListenable: _indexNotifier,
+                  builder: (context, index, _) => _LeafViewerDefaultControls(
+                    controls: LeafViewerControls(pageCount: widget.pageCount, currentIndex: index, goToPage: _goToPage),
+                    showPageCounter: widget.showPageCounter,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -403,9 +428,10 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 /// LeafViewer keeps neighbour pages alive, so an unconditional hero on every
 /// page registers several per route — popping the viewer then flies the
 /// active page AND its neighbours back to the grid. This gates the hero on
-/// "this page is the settled one", so exactly one flight happens. The child
-/// instance is passed through untouched, so providers stay stable across
-/// page changes. Outside a viewer it behaves like a plain [Hero].
+/// "this page is the settled one" with a [HeroMode], so exactly one flight
+/// happens. Every page keeps the same tree shape, so the child's state
+/// (zoom, players, decoded images) survives page changes. Outside a viewer
+/// it behaves like a plain [Hero].
 class LeafViewerHero extends StatelessWidget {
   const LeafViewerHero({super.key, required this.tag, required this.child});
 
@@ -416,11 +442,12 @@ class LeafViewerHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final index = LeafViewer.pageIndexOf(context);
     final currentIndex = LeafViewer.currentIndexListOf(context);
-    if (index == null || currentIndex == null) return Hero(tag: tag, child: child);
+    final hero = Hero(tag: tag, child: child);
+    if (index == null || currentIndex == null) return hero;
     return ValueListenableBuilder<int>(
       valueListenable: currentIndex,
-      child: child,
-      builder: (context, current, child) => current == index ? Hero(tag: tag, child: child!) : child!,
+      child: hero,
+      builder: (context, current, hero) => HeroMode(enabled: current == index, child: hero!),
     );
   }
 }

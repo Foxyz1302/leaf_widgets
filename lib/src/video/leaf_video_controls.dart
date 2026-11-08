@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../viewer/leaf_viewer.dart';
 import '../viewer/leaf_viewer_internal.dart';
 import 'leaf_video_adapter.dart';
+import 'scrubber_progress.dart';
 
 enum _SkipDirection { backward, forward }
 
@@ -116,13 +117,9 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
           if (chrome != null)
             ValueListenableBuilder<bool>(
               valueListenable: chrome.visibleListenable,
-              builder: (context, visible, _) => IgnorePointer(
-                ignoring: !visible,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  opacity: visible ? 1.0 : 0.0,
-                  child: Align(alignment: Alignment.bottomCenter, child: SafeArea(child: _buildBar(context))),
-                ),
+              builder: (context, visible, _) => _ChromeFade(
+                visible: visible,
+                builder: (context) => Align(alignment: Alignment.bottomCenter, child: SafeArea(child: _buildBar(context))),
               ),
             )
           else
@@ -206,6 +203,41 @@ class _LeafVideoControlsState extends State<LeafVideoControls> {
   }
 }
 
+class _ChromeFade extends StatefulWidget {
+  const _ChromeFade({required this.visible, required this.builder});
+
+  final bool visible;
+  final WidgetBuilder builder;
+
+  @override
+  State<_ChromeFade> createState() => _ChromeFadeState();
+}
+
+class _ChromeFadeState extends State<_ChromeFade> {
+  late bool _built = widget.visible;
+
+  @override
+  void didUpdateWidget(_ChromeFade oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.visible) _built = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: !widget.visible,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 200),
+        opacity: widget.visible ? 1.0 : 0.0,
+        onEnd: () {
+          if (!widget.visible && _built) setState(() => _built = false);
+        },
+        child: _built ? widget.builder(context) : const SizedBox.shrink(),
+      ),
+    );
+  }
+}
+
 class _Scrubber extends StatefulWidget {
   const _Scrubber(this.adapter);
 
@@ -215,12 +247,26 @@ class _Scrubber extends StatefulWidget {
   State<_Scrubber> createState() => _ScrubberState();
 }
 
-class _ScrubberState extends State<_Scrubber> {
+class _ScrubberState extends State<_Scrubber> with SingleTickerProviderStateMixin {
+  late final ScrubberProgress _progress;
   bool _wasPaused = false;
 
-  double _fraction(Duration value) {
-    final duration = widget.adapter.duration;
-    return duration.inMilliseconds > 0 ? (value.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0) : 0.0;
+  @override
+  void initState() {
+    super.initState();
+    _progress = ScrubberProgress(widget.adapter, this);
+  }
+
+  @override
+  void didUpdateWidget(_Scrubber oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _progress.adapter = widget.adapter;
+  }
+
+  @override
+  void dispose() {
+    _progress.dispose();
+    super.dispose();
   }
 
   void _seekFraction(double fraction) {
@@ -230,56 +276,35 @@ class _ScrubberState extends State<_Scrubber> {
   @override
   Widget build(BuildContext context) {
     const height = 6.0;
-    const radius = Radius.circular(3);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapDown: (details) => _seekFraction(details.localPosition.dx / (context.findRenderObject() as RenderBox).size.width),
       onHorizontalDragStart: (_) {
         _wasPaused = !widget.adapter.isPlaying;
+        _progress.dragging = true;
         widget.adapter.pause();
       },
       onHorizontalDragUpdate: (details) => _seekFraction(details.localPosition.dx / (context.findRenderObject() as RenderBox).size.width),
       onHorizontalDragEnd: (_) {
+        _progress.dragging = false;
         if (!_wasPaused) widget.adapter.play();
       },
-      child: SizedBox(
-        height: 20,
-        child: Center(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              return SizedBox(
-                height: height,
-                width: width,
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.all(radius),
-                  child: Stack(
-                    children: [
-                      Container(color: Colors.white12),
-                      StreamBuilder<Duration>(
-                        stream: widget.adapter.bufferStream,
-                        builder: (context, _) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 400),
-                          curve: Curves.fastEaseInToSlowEaseOut,
-                          width: (_fraction(widget.adapter.buffer) * width).clamp(0.0, width),
-                          color: Colors.white30,
-                        ),
-                      ),
-                      StreamBuilder<Duration>(
-                        stream: widget.adapter.positionStream,
-                        builder: (context, _) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          curve: Curves.fastEaseInToSlowEaseOut,
-                          width: (_fraction(widget.adapter.position) * width).clamp(0.0, width),
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+      child: RepaintBoundary(
+        child: SizedBox(
+          height: 20,
+          child: Center(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                _progress.extent = width * MediaQuery.devicePixelRatioOf(context);
+                return SizedBox(
+                  height: height,
+                  width: width,
+                  child: CustomPaint(painter: ScrubberTrackPainter(_progress, playedColor: Theme.of(context).colorScheme.primary)),
+                );
+              },
+            ),
           ),
         ),
       ),

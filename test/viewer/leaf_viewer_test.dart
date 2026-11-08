@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:leaf_widgets/leaf_widgets.dart';
@@ -148,6 +149,65 @@ void main() {
     await tester.pumpAndSettle();
     expect(dismissed, isFalse);
     expect(progress, lessThan(0.001)); // spring settles asymptotically, never exactly 0
+  });
+
+  testWidgets('dismiss drag and spring-back do not re-invoke pageBuilder', (tester) async {
+    final counts = <int, int>{};
+    var frames = 0;
+    await tester.pumpWidget(_harness(
+      pageBuilder: (context, i) {
+        counts[i] = (counts[i] ?? 0) + 1;
+        return _zoomablePage(context, i);
+      },
+      onProgress: (_) => frames++,
+    ));
+    final before = Map.of(counts);
+    await tester.timedDrag(find.byType(LeafViewer), const Offset(0, 100), const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(frames, greaterThan(5));
+    expect(counts, before);
+  });
+
+  testWidgets('the settled index flips when the swipe comes to rest, not at the midpoint', (tester) async {
+    final changed = <int>[];
+    final settled = <int>[];
+    ValueListenable<int>? index;
+    await tester.pumpWidget(_harness(
+      onPageChanged: changed.add,
+      pageBuilder: (context, i) {
+        index ??= LeafViewer.currentIndexListOf(context)?..addListener(() => settled.add(index!.value));
+        return _zoomablePage(context, i);
+      },
+    ));
+    final g = await tester.startGesture(const Offset(700, 300));
+    for (var i = 0; i < 10; i++) {
+      await g.moveBy(const Offset(-50, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(changed, [1]);
+    expect(settled, isEmpty);
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(settled, [1]);
+  });
+
+  testWidgets('a rebuild inside a page lays out nothing above the page', (tester) async {
+    final page = GlobalKey<_RebuildableState>();
+    await tester.pumpWidget(_harness(pageBuilder: (context, i) => i == 0 ? _Rebuildable(key: page) : const SizedBox.expand()));
+    final laidOut = <String>[];
+    final saved = debugPrint;
+    debugPrintLayouts = true;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null && message.startsWith('Laying out')) laidOut.add(message);
+    };
+    try {
+      page.currentState!.rebuild();
+      await tester.pump();
+    } finally {
+      debugPrint = saved;
+      debugPrintLayouts = false;
+    }
+    expect(laidOut, isEmpty);
   });
 
   testWidgets('1× vertical drag past 25% flies off and dismisses', (tester) async {
@@ -479,4 +539,18 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
   });
+}
+
+class _Rebuildable extends StatefulWidget {
+  const _Rebuildable({super.key});
+
+  @override
+  State<_Rebuildable> createState() => _RebuildableState();
+}
+
+class _RebuildableState extends State<_Rebuildable> {
+  void rebuild() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Color(0xFF112233));
 }

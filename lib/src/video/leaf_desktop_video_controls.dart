@@ -29,6 +29,7 @@ class LeafDesktopVideoControls extends StatefulWidget {
 
 class _LeafDesktopVideoControlsState extends State<LeafDesktopVideoControls> {
   bool _visible = true;
+  bool _barBuilt = true;
   Timer? _hideTimer;
   StreamSubscription<bool>? _playingSub;
   double _mutedVolume = 100;
@@ -65,7 +66,12 @@ class _LeafDesktopVideoControlsState extends State<LeafDesktopVideoControls> {
 
   void _show() {
     _hideTimer?.cancel();
-    if (mounted && !_visible) setState(() => _visible = true);
+    if (mounted && !_visible) {
+      setState(() {
+        _visible = true;
+        _barBuilt = true;
+      });
+    }
   }
 
   void _userActivity() {
@@ -109,10 +115,13 @@ class _LeafDesktopVideoControlsState extends State<LeafDesktopVideoControls> {
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 200),
                     opacity: _visible ? 1.0 : 0.0,
+                    onEnd: () {
+                      if (!_visible && _barBuilt) setState(() => _barBuilt = false);
+                    },
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: () {},
-                      child: _buildBar(context),
+                      child: _visible || _barBuilt ? _buildBar(context) : const SizedBox.shrink(),
                     ),
                   ),
                 ),

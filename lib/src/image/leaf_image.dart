@@ -1,6 +1,7 @@
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Reveal Animation Interface
@@ -55,26 +56,73 @@ class GradientRevealAnimation extends LeafRevealAnimation {
   @override
   Widget build(BuildContext context, Widget child, AnimationController controller) {
     return AnimatedBuilder(
-      animation: CurvedAnimation(parent: controller, curve: curve),
+      animation: controller,
       builder: (context, child) {
-        final t = controller.value;
+        final t = curve.transform(controller.value);
         final startStop1 = -window;
         final startStop2 = 0.0;
         final stop1 = lerpDouble(startStop1, finalStop2 - window, t)!;
         final stop2 = lerpDouble(startStop2, finalStop2, t)!;
-        return ShaderMask(
-          shaderCallback: (bounds) => LinearGradient(
-            begin: direction == Axis.horizontal ? Alignment.centerLeft : Alignment.topCenter,
-            end: direction == Axis.horizontal ? Alignment.centerRight : Alignment.bottomCenter,
-            colors: const [Colors.white, Colors.transparent],
-            stops: [stop1, stop2],
-          ).createShader(bounds),
-          blendMode: BlendMode.dstIn,
+        return _RevealMask(
+          gradient: stop1 >= 1.0
+              ? null
+              : LinearGradient(
+                  begin: direction == Axis.horizontal ? Alignment.centerLeft : Alignment.topCenter,
+                  end: direction == Axis.horizontal ? Alignment.centerRight : Alignment.bottomCenter,
+                  colors: const [Colors.white, Colors.transparent],
+                  stops: [stop1, stop2],
+                ),
           child: child!,
         );
       },
       child: child,
     );
+  }
+}
+
+class _RevealMask extends SingleChildRenderObjectWidget {
+  const _RevealMask({required this.gradient, required super.child});
+
+  final Gradient? gradient;
+
+  @override
+  _RenderRevealMask createRenderObject(BuildContext context) => _RenderRevealMask(gradient);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderRevealMask renderObject) => renderObject.gradient = gradient;
+}
+
+class _RenderRevealMask extends RenderProxyBox {
+  _RenderRevealMask(this._gradient);
+
+  Gradient? _gradient;
+
+  set gradient(Gradient? value) {
+    if (value == _gradient) return;
+    final wasMasking = _gradient != null;
+    _gradient = value;
+    if (wasMasking != (value != null)) markNeedsCompositingBitsUpdate();
+    markNeedsPaint();
+  }
+
+  @override
+  bool get alwaysNeedsCompositing => child != null && _gradient != null;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final gradient = _gradient;
+    if (child == null || gradient == null) {
+      layer = null;
+      super.paint(context, offset);
+      return;
+    }
+    final mask = layer is ShaderMaskLayer ? layer! as ShaderMaskLayer : ShaderMaskLayer();
+    mask
+      ..shader = gradient.createShader(Offset.zero & size)
+      ..maskRect = offset & size
+      ..blendMode = BlendMode.dstIn;
+    layer = mask;
+    context.pushLayer(mask, super.paint, offset);
   }
 }
 
@@ -89,7 +137,7 @@ class FadeRevealAnimation extends LeafRevealAnimation {
   @override
   Widget build(BuildContext context, Widget child, AnimationController controller) {
     return FadeTransition(
-      opacity: CurvedAnimation(parent: controller, curve: curve),
+      opacity: controller.drive(CurveTween(curve: curve)),
       child: child,
     );
   }
