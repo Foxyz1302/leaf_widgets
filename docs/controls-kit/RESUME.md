@@ -1,46 +1,26 @@
-# Controls kit: resume state (2026-10-23)
+# Controls kit: resume state (2026-11-08)
 
-DESIGN.md (alongside this file) is authoritative. Scope: phases 1–4, opt-in, the legacy controls are never edited here (their changes arrive through perf-audit merges), local only.
+DESIGN.md (alongside this file) is authoritative. Scope: phases 1–4, opt-in, the legacy controls are never edited here. Branch `controls-kit`, master (902bbe0) merged in.
 
 ## Done
-- e6b45d4 (WIP, phase 1 partial), new files only, not exported from the barrel yet:
-  - `lib/src/video/leaf_video_capabilities.dart`: the 10 `Has*` abstract mixin classes, plus value types (`LeafTrack`/`LeafTracks`, `LeafChapter`, `LeafTimeRange`, `LeafQuality`/`LeafQualities`, `LeafSkipKind`, `LeafSkipSegment`, `LeafVideoStats`).
-  - `lib/src/video/controls/media_math.dart`: ported from sync_relay, plus `skipOfferAt`/`LeafSkipOffer`.
-  - `test/video/controls/media_math_test.dart`: 14 tests.
-- Deviations so far:
-  - `skipOfferAt` is generalised: an app segment > an OP/ED chapter ("Skip <title>" if ≤16 chars) > a fixed fallback (off by default).
-  - `LeafSkipOffer` equality ignores the target.
-  - `LeafTrack.adapterLabel` is the field; the `label` getter formats it.
-  - `chapterIndexAt` returns the list position.
+- Phase 1 (6924337): `LeafPlayerCommand`, `LeafPlayerController` (throttled position, pending seek, capability listenables, actions, prefs), `LeafAutoHideVisibility` / `LeafViewerChromeVisibility` / `LeafControlsHold(Region)`, `fitBar`.
+- Phase 2 (1f91790): `LeafPlayerControls` host, catalog items (play/bigPlay/pauseIndicator/buffering/previous/next/seekBy/seekBar line+band/time/progressLine/chapter steps/volume/mute/volumeFlash/fullscreen/title/back/seekFeedback + generic action/toggle/widget/spacer/gap), layout + 5 presets, theme, keymap (standard/mpv/youtube), demo page (`example/lib/video_controls_demo.dart`), `example/benchmark/controls_headless_bench_test.dart`.
+- Phase 3: `LeafPlayerView` (route fullscreen moving the surface by GlobalKey, in-place mode), `LeafFullscreenDelegate` (+ callbacks, none, platformDefault, `LeafSystemFullscreenDelegate`), `LeafPlayerDefaults`, `LeafVideoPage(controls:, actions:, fullscreenDelegate:, fullscreenMode:)`, cover exemption, viewer bridge, viewer-key exclusion, focus on activation, next/prev paging the viewer.
+- Linux check (media_kit, 1 player, volume 0, scratch app `/home/foxyz/.claude/jobs/9f255c64/tmp/leaf-controls/mk_fs`): 3 fullscreen cycles, 1 create, 1 load, same texture id, playback advancing in and out.
 
-## Next
-1. Finish phase 1:
-   - `leaf_player_command.dart`: sealed commands with value equality, plus a `dismiss` command for Esc (close menu → panel → info → exit fullscreen).
-   - `leaf_player_controller.dart`:
-     - timer-throttled position (the trailing value lands; seeks and play/pause flush; no timer without listeners; `debugListenerCount`);
-     - `positionSeconds = pendingSeek ?? raw` (the pending seek clears within 1.5 s of the target and drops after 2 s);
-     - duration via `HasPlaybackStatus`, else re-read with change detection;
-     - without that capability, buffering is true until the first frame;
-     - `skipFallback`, the fullscreen attach point, the volume/toggle flash ticks, a redactable `source` URL, `LeafPlayerActions`, `LeafControlsPrefs`.
-   - `leaf_controls_visibility.dart`:
-     - a timer port of `ControlsFrameState`;
-     - a `LeafViewerChrome` bridge as the sole writer of `chrome.hold`, with an `Expando` owner per chrome;
-     - `LeafControlsHold`/`LeafControlsHoldRegion`, with microtask-coalesced notifications.
-   - `fitBar` as a pure function over `LeafFitItem`.
-   - Tests: `player_controller_test`, `visibility_test`.
-2. Phase 2:
-   - Fades: one 150 ms AnimationController; AnimatedBuilder → Opacity; regions removed after the fade. A `persistent` flag keeps buffering, pauseIndicator and the band mounted.
-   - Inside LeafViewer, build controls on the settled page only. The kit owns the only buffering spinner. `minimal` adds buffering at the centre (a deviation).
-   - `RenderLeafSeekBar`: paints its own tip, uses an eager recognizer and a MouseTrackerAnnotation, repaints only on ≥1 physical px, caches and disposes its TextPainters.
-   - Input: touch through a GestureDetector; mouse through a Listener (click on down) plus a DoubleClickListener port that skips the bars via overlayInsets. Bars sit in ExcludeFocus; the host takes focus on pointer-down.
-3. Phase 3:
-   - Merge perf-audit FIRST (it brings P2's deferDispose and the scrubber fix).
-   - The fullscreen route uses `KeyedSubtree(surfaceKey)`, swapped by one notifier, so the element moves within a single frame.
-   - Remove the route after the frame, then dispose the adapter.
-   - Cover exemption: use the fullscreen route's `isCurrent`.
-   - In kit mode the page never writes `chrome.hold`.
-4. Phase 4:
-   - Adapter worktrees: `git -C <repo> worktree add ../<repo>-wt/controls-kit -b controls-kit` for video_adapter_media_kit (39b639e) and video_adapter_native (c11c47f), each with an uncommitted pubspec_overrides.yaml pointing at this worktree. Changes stay additive.
-   - media_kit 1.2.6: map its streams, `set*Track` (with `.no()` for off), `setPlaylistMode`, and `chapter-list` via NativePlayer `observeProperty`. Put the §6.3 dispose sequencing in the adapter.
-   - The native fork has NO chapters API: its tracks are futures, so poll them. leafbooru's adapter goes in as a diff only.
-   - Linux demo: a scratch app OUTSIDE example/ (system libmpv + an ffmpeg-made clip with chapters, 2 audio tracks and subtitles).
+## Deviations from DESIGN
+- PgUp = next chapter, PgDn = previous (mpv, as sync_relay now does); DESIGN had them the other way.
+- `Opacity` keeps an OpacityLayer even at 1.0 on this SDK (RenderOpacity is a repaint boundary whenever alpha > 0), so regions fade through a private layerless `_FadeBox`.
+- The fitted bar row is a tight, repaint-isolated LayoutBuilder: a LayoutBuilder is its descendants' build scope, so the clock's 1 Hz tick otherwise relaid out the whole bottom bar.
+- `LeafControl.isAvailable` takes the `LeafControlContext` (fullscreen, viewer paging), not the controller.
+- Presets carry only phase 1–3 items; subtitles / audio / speed / settings / skip / info / rateFlash join in phase 4. Items `fitBar` drops are hidden; the ⋯ menu that lists them is phase 4.
+- `LeafGestureSpec` has no phase-5 fields yet (long-press rate, swipes); `LeafPlayerDefaults` has no brightness delegate; it lives in its own file.
+- With the kit, `onFullscreenToggle` (no delegate) also picks in-place mode when the mode is auto.
+- The controller keeps a stack of attached hosts (the fullscreen route's over the inline one) and a `pendingTeardown` future: a page disposed while fullscreen disposes its controller and adapter only after the route is gone.
+- Unknown aspect ratio counts as landscape for the in-place availability rule.
+
+## Next (phase 4)
+- In-player menus (`LeafPlayerMenu`, never a route), the settings root, ⋯ overflow for `fitBar`'s dropped and `prefs.hidden` items; `LeafControl.menu` / `.panel`, `LeafPanelSection`.
+- Items: subtitles, audioTracks, quality, speed, chapters list, loop, skip pill, info overlay (+ `readStats` 1 Hz only while shown), rateFlash; add them to the presets.
+- Adapter worktrees (`video_adapter_media_kit` 39b639e, `video_adapter_native` c11c47f) with uncommitted `pubspec_overrides.yaml` pointing here: media_kit status/rate/tracks/chapters (`observeProperty('chapter-list')`)/video size/stats/looping, and the §6.3 dispose sequencing. Native fork: no chapters API, tracks are futures (poll).
+- Tests from §5.3 still open: menus_test, info_overlay_test, skip_test.

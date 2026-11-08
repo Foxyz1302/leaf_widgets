@@ -7,6 +7,11 @@ import 'package:flutter/scheduler.dart';
 import '../viewer/leaf_chrome.dart';
 import '../viewer/leaf_viewer.dart';
 import '../viewer/leaf_viewer_internal.dart';
+import 'controls/leaf_controls_spec.dart';
+import 'controls/leaf_fullscreen.dart';
+import 'controls/leaf_player_controller.dart';
+import 'controls/leaf_player_defaults.dart';
+import 'controls/leaf_player_view.dart';
 import 'first_frame_gate.dart';
 import 'leaf_desktop_video_controls.dart';
 import 'leaf_video_adapter.dart';
@@ -27,6 +32,12 @@ import 'leaf_video_controls.dart';
 /// Chrome policy on a chrome-enabled viewer: while paused, chrome is held up
 /// (and shown on the pause transition); while playing, the viewer's auto-hide
 /// timer runs.
+///
+/// Controls: the legacy [LeafVideoControls] / [LeafDesktopVideoControls]
+/// unless [controls] is set, or [controlsBuilder] is null and a
+/// [LeafPlayerDefaults] above sets one; then the controls kit (a
+/// [LeafPlayerView] with real fullscreen) takes over, and the kit owns the
+/// chrome hold and the spinner.
 class LeafVideoPage extends StatefulWidget {
   const LeafVideoPage({
     super.key,
@@ -40,7 +51,11 @@ class LeafVideoPage extends StatefulWidget {
     this.onFullscreenToggle,
     this.deferWhileScrolling = false,
     this.deferDispose = false,
-  });
+    this.controls,
+    this.actions,
+    this.fullscreenDelegate,
+    this.fullscreenMode,
+  }) : assert(controls == null || controlsBuilder == null, 'Pass either controls (the kit) or controlsBuilder, not both');
 
   /// Creates the (unloaded) adapter. Called once per page state; the page owns
   /// and disposes it. Route by codec here — the closure can capture the post.
@@ -62,8 +77,20 @@ class LeafVideoPage extends StatefulWidget {
   final Duration skipDuration;
 
   /// Passed through to the default controls; null hides the button. Provide
-  /// it only for videos where fullscreen makes sense (landscape ones).
+  /// it only for videos where fullscreen makes sense (landscape ones). With
+  /// the kit and no [fullscreenDelegate], it becomes the in-place delegate
+  /// (called on enter and on exit).
   final VoidCallback? onFullscreenToggle;
+
+  /// The controls kit's spec; switches this page to the kit.
+  final LeafControlsSpec? controls;
+
+  /// The kit's app hooks (title, next/previous, play and seek overrides).
+  final LeafPlayerActions? actions;
+
+  /// The kit's OS fullscreen step.
+  final LeafFullscreenDelegate? fullscreenDelegate;
+  final LeafFullscreenMode? fullscreenMode;
 
   /// Inside a [LeafViewer], a page first built while the pager is scrolling
   /// creates and loads its player only after the pager has come to rest,
@@ -103,6 +130,11 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   bool _wasPlayingBeforeCover = false;
 
   LeafViewerChrome? _chrome;
+  LeafPlayerController? _kit;
+  LeafControlsSpec? _kitSpec;
+  bool _pageCovered = false;
+  bool _fullscreenRoute = false;
+  bool _fullscreenRouteCovered = false;
   FirstFrameGate? _gate;
   int? _pageIndex;
   ValueListenable<int>? _currentIndex;
@@ -152,7 +184,10 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     _waitForIdle = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _adapter != null) return;
-      setState(_createAdapter);
+      setState(() {
+        _createAdapter();
+        _syncKit();
+      });
       _started = true;
       _startLoad();
     });
@@ -206,6 +241,35 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     if (_active && !_coveredByRoute && !_backgrounded) adapter.play();
   }
 
+  void _syncKit() {
+    final defaults = LeafPlayerDefaults.maybeOf(context);
+    final spec = widget.controls ?? (widget.controlsBuilder == null ? defaults?.controls : null);
+    _kitSpec = spec;
+    final adapter = _adapter;
+    if (spec == null) {
+      if (_kit != null && _kit!.pendingTeardown == null && !_kit!.fullscreen.value) {
+        _kit!.dispose();
+        _kit = null;
+      }
+      return;
+    }
+    if (adapter == null || _kit != null) return;
+    _kit = LeafPlayerController(adapter, actions: widget.actions ?? const LeafPlayerActions(), prefs: defaults?.prefs)
+      ..source = widget.url;
+  }
+
+  void _onFullscreenRoute(bool active, bool covered) {
+    _fullscreenRoute = active;
+    _fullscreenRouteCovered = covered;
+    if (!active && mounted) {
+      final route = ModalRoute.of(context);
+      _pageCovered = route != null && !route.isCurrent;
+    }
+    _applyCover();
+  }
+
+  void _applyCover() => _setCoveredByRoute(_fullscreenRoute ? _fullscreenRouteCovered : _pageCovered);
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -229,10 +293,12 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
         }
       } else {
         if (_adapter == null) _createAdapter();
+        _syncKit();
         _started = true;
         _startLoad();
       }
     }
+    _syncKit();
 
     // "Something is pushed on top of me" — sheets, pages, dialogs, anything.
     // Route.isCurrent is the only reliable signal: a route's secondaryAnimation
@@ -241,12 +307,17 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     // the most common cover in gallery apps. _ModalScopeStatus notifies on
     // isCurrent changes, so this re-runs from didChangeDependencies.
     final route = ModalRoute.of(context);
-    _setCoveredByRoute(route != null && !route.isCurrent);
+    _pageCovered = route != null && !route.isCurrent;
+    _applyCover();
   }
 
   @override
   void didUpdateWidget(LeafVideoPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _syncKit();
+    final actions = widget.actions;
+    if (actions != oldWidget.actions) _kit?.updateActions(actions ?? const LeafPlayerActions());
+    _kit?.source = widget.url;
     if (oldWidget.url != widget.url || !mapEquals(oldWidget.headers, widget.headers)) {
       _loaded = false;
       _ready = false;
@@ -277,8 +348,8 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     _active = active;
     if (!active) {
       // Release hold for the page leaving the stage; the active page's policy
-      // owns it from here.
-      _chrome?.hold = false;
+      // owns it from here. With the kit, its viewer bridge does.
+      if (_kit == null) _chrome?.hold = false;
       if (_loadIssued) _adapter!.pause();
     } else if (!_loadIssued) {
       if (_started) _load();
@@ -301,7 +372,7 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
   }
 
   void _onPlayingChanged(bool playing) {
-    if (!_active) return;
+    if (!_active || _kit != null) return;
     final chrome = _chrome;
     if (chrome == null) return;
     if (playing) {
@@ -327,12 +398,24 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     WidgetsBinding.instance.removeObserver(this);
     _releaseGate();
     final adapter = _adapter;
-    if (adapter != null) {
-      if (widget.deferDispose) {
-        if (_loadIssued) adapter.pause();
-        _PendingDisposals.instance.add(adapter);
-      } else {
-        adapter.dispose();
+    final kit = _kit;
+    final teardown = kit?.pendingTeardown;
+    if (teardown != null) {
+      // The fullscreen route still holds the surface: dispose once it is gone.
+      if (_loadIssued && adapter != null) scheduleMicrotask(adapter.pause);
+      teardown.then((_) {
+        kit!.dispose();
+        adapter?.dispose();
+      });
+    } else {
+      kit?.dispose();
+      if (adapter != null) {
+        if (widget.deferDispose) {
+          if (_loadIssued) adapter.pause();
+          _PendingDisposals.instance.add(adapter);
+        } else {
+          adapter.dispose();
+        }
       }
     }
     super.dispose();
@@ -343,6 +426,8 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
     final ratio = widget.aspectRatio;
     final adapter = _adapter;
     final thumbnail = widget.thumbnail;
+    final kit = _kit;
+    if (kit != null && adapter != null) return _buildKit(kit, adapter, ratio, thumbnail);
     final Widget surface;
     final Widget controls;
     if (adapter == null) {
@@ -368,6 +453,56 @@ class _LeafVideoPageState extends State<LeafVideoPage> with WidgetsBindingObserv
         if (!_loaded && !_failed && !_ready && thumbnail == null)
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),
         Positioned.fill(child: controls),
+        if (_failed)
+          ColoredBox(
+            color: Colors.black54,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.broken_image, color: Colors.white38, size: 40),
+                const SizedBox(height: 8),
+                TextButton(onPressed: _retry, child: const Text('Tap to retry', style: TextStyle(color: Colors.white38))),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+extension on _LeafVideoPageState {
+  Widget _buildKit(LeafPlayerController kit, VideoPlayerAdapter adapter, double? ratio, Widget? thumbnail) {
+    final toggle = widget.onFullscreenToggle;
+    final legacyDelegate = widget.fullscreenDelegate == null && toggle != null;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        LeafPlayerView(
+          controller: kit,
+          surface: adapter.surface,
+          spec: _kitSpec,
+          aspectRatio: ratio,
+          placeholder: thumbnail == null
+              ? null
+              : ColoredBox(
+                  color: Colors.black,
+                  child: ratio != null ? Center(child: AspectRatio(aspectRatio: ratio, child: thumbnail)) : Center(child: thumbnail),
+                ),
+          underlay: [
+            if (!_ready && thumbnail != null)
+              IgnorePointer(
+                child: ratio != null ? Center(child: AspectRatio(aspectRatio: ratio, child: thumbnail)) : Center(child: thumbnail),
+              ),
+          ],
+          fullscreenMode: legacyDelegate && (widget.fullscreenMode ?? LeafFullscreenMode.auto) == LeafFullscreenMode.auto
+              ? LeafFullscreenMode.inPlace
+              : widget.fullscreenMode,
+          fullscreenDelegate: legacyDelegate
+              ? LeafFullscreenDelegate.callbacks(onEnter: (_) => toggle(), onExit: (_) => toggle())
+              : widget.fullscreenDelegate,
+          onRetry: _retry,
+          onFullscreenRoute: _onFullscreenRoute,
+        ),
         if (_failed)
           ColoredBox(
             color: Colors.black54,

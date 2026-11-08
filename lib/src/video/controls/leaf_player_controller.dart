@@ -433,8 +433,14 @@ class LeafPlayerController {
   final _seekFlash = ValueNotifier<LeafSeekFlash?>(null);
   double _unmutedVolume = 100;
 
-  LeafControlsHostHandle? _host;
+  final _hosts = <LeafControlsHostHandle>[];
+  LeafControlsHostHandle? get _host => _hosts.isEmpty ? null : _hosts.last;
   LeafFullscreenHandle? _fullscreenHandle;
+
+  /// Set by a player view disposed while its fullscreen route is still up:
+  /// completes once the route (holding the surface) is gone, so the owner
+  /// disposes the adapter and this controller only then.
+  Future<void>? pendingTeardown;
 
   /// The media URL, for the info overlay; see [redactedSource].
   String? source;
@@ -617,29 +623,38 @@ class LeafPlayerController {
 
   // ── Attach points ──────────────────────────────────────────────────────
 
-  void attachControls(LeafControlsHostHandle host) => _host = host;
-
-  void detachControls(LeafControlsHostHandle host) {
-    if (identical(_host, host)) _host = null;
+  /// The newest attached host (the fullscreen route's over the inline one)
+  /// gets the UI commands.
+  void attachControls(LeafControlsHostHandle host) {
+    _hosts
+      ..remove(host)
+      ..add(host);
   }
+
+  void detachControls(LeafControlsHostHandle host) => _hosts.remove(host);
 
   /// The fullscreen performer; it reports state through [setFullscreen].
   void attachFullscreen(LeafFullscreenHandle handle) {
+    if (_disposed) return;
     _fullscreenHandle = handle;
     _fullscreenAvailable.value = handle.canFullscreen;
   }
 
   void detachFullscreen(LeafFullscreenHandle handle) {
-    if (!identical(_fullscreenHandle, handle)) return;
+    if (_disposed || !identical(_fullscreenHandle, handle)) return;
     _fullscreenHandle = null;
     _fullscreenAvailable.value = false;
   }
 
   /// Called by the fullscreen performer.
-  void setFullscreen(bool on) => _fullscreen.value = on;
+  void setFullscreen(bool on) {
+    if (!_disposed) _fullscreen.value = on;
+  }
 
   /// Re-reads [LeafFullscreenHandle.canFullscreen].
-  void refreshFullscreenAvailable() => _fullscreenAvailable.value = _fullscreenHandle?.canFullscreen ?? false;
+  void refreshFullscreenAvailable() {
+    if (!_disposed) _fullscreenAvailable.value = _fullscreenHandle?.canFullscreen ?? false;
+  }
 
   // ── Commands ───────────────────────────────────────────────────────────
 

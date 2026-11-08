@@ -377,7 +377,7 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
     final showTop = !layout.topOnlyInFullscreen || widget.isFullscreen;
     final uosc = theme.clusterLook == LeafClusterLook.capsule || layout.capsules;
 
-    Widget fading(Widget child) => _Fade(animation: _fade, child: child);
+    Widget fading(Widget child) => _Fade(animation: _fade, shown: _visibility!.visible, child: child);
     Widget whenHidden(Widget child) => _WhenHidden(animation: _fade, child: child);
 
     final top = showTop
@@ -571,6 +571,7 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
       type: MaterialType.transparency,
       child: Focus(
         focusNode: _focus,
+        autofocus: widget.isFullscreen,
         onKeyEvent: _onKey,
         child: Listener(
           behavior: HitTestBehavior.translucent,
@@ -591,19 +592,21 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
 /// Fully shown it adds no layer: Opacity (and FadeTransition) keep an
 /// OpacityLayer even at 1.0, [_FadeBox] does not.
 class _Fade extends StatelessWidget {
-  const _Fade({required this.animation, required this.child});
+  const _Fade({required this.animation, required this.shown, required this.child});
 
   final AnimationController animation;
+
+  /// The target: pointers are ignored as soon as the controls start hiding.
+  final ValueListenable<bool> shown;
   final Widget child;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: animation,
+    animation: Listenable.merge([animation, shown]),
     child: ExcludeFocus(child: child),
     builder: (context, child) {
       if (animation.value == 0) return const SizedBox.shrink();
-      final leaving = animation.status == AnimationStatus.reverse;
-      return IgnorePointer(ignoring: leaving, child: _FadeBox(opacity: animation.value, child: child));
+      return IgnorePointer(ignoring: !shown.value, child: _FadeBox(opacity: animation.value, child: child));
     },
   );
 }

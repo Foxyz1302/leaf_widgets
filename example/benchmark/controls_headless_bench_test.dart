@@ -2,6 +2,7 @@ import 'package:example/bench/bench_video_adapter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leaf_widgets/leaf_widgets.dart';
 // ignore: implementation_imports
@@ -34,6 +35,7 @@ Future<void> _settle(WidgetTester tester, int ms) async {
 }
 
 void main() {
+  fullscreenCycleBench();
   for (final MapEntry(key: name, value: spec) in _presets.entries) {
     testWidgets('kit-playing-$name: hidden and visible, position at 30 Hz', (tester) async {
       final desktop = name == 'desktop' || name == 'uosc';
@@ -114,4 +116,98 @@ void main() {
       }
     });
   }
+}
+
+class _CountingSurface extends StatefulWidget {
+  const _CountingSurface(this.child);
+
+  static int inits = 0;
+  final Widget child;
+
+  @override
+  State<_CountingSurface> createState() => _CountingSurfaceState();
+}
+
+class _CountingSurfaceState extends State<_CountingSurface> {
+  @override
+  void initState() {
+    super.initState();
+    _CountingSurface.inits++;
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+class _SurfaceKitAdapter extends BenchKitAdapter {
+  _SurfaceKitAdapter() : super(seed: 3);
+
+  @override
+  Widget get surface => _CountingSurface(super.surface);
+}
+
+void fullscreenCycleBench() {
+  testWidgets('kit-fullscreen-cycle: 10 route cycles move the surface, nothing reloads', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    BenchCounters.reset();
+    _CountingSurface.inits = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: SizedBox(
+              width: 960,
+              height: 540,
+              child: Builder(
+                builder: (context) {
+                  BenchCounters.pageBuilds++;
+                  return LeafVideoPage(createAdapter: _SurfaceKitAdapter.new, url: 'bench://fs', controls: LeafControlsSpec.uosc);
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+    await _settle(tester, 4000);
+    final controller = tester.widget<LeafPlayerControls>(find.byType(LeafPlayerControls)).controller;
+    var entered = 0;
+    void onFullscreen() {
+      if (controller.fullscreen.value) entered++;
+    }
+
+    controller.fullscreen.addListener(onFullscreen);
+    final before = {...BenchCounters.snapshot(), 'surfaceInits': _CountingSurface.inits};
+    final layersBefore = benchLayerCounts(tester.binding.renderViews.first.debugLayer!);
+    for (var i = 0; i < 10; i++) {
+      controller.execute(const LeafPlayerCommand.enterFullscreen());
+      await _settle(tester, 200);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await _settle(tester, 200);
+    }
+    controller.fullscreen.removeListener(onFullscreen);
+    await _settle(tester, 4000);
+    final after = {...BenchCounters.snapshot(), 'surfaceInits': _CountingSurface.inits};
+    final layersAfter = benchLayerCounts(tester.binding.renderViews.first.debugLayer!);
+    final delta = {for (final k in after.keys) k: after[k]! - (before[k] ?? 0)};
+    benchReport('kit-fullscreen-cycle', {'entered': entered, 'fullscreenNow': controller.fullscreen.value, 'delta': delta, 'layersBefore': layersBefore, 'layersAfter': layersAfter});
+    try {
+      expect(entered, 10);
+      expect(controller.fullscreen.value, isFalse);
+      expect(delta['creates'], 0);
+      expect(delta['loads'], 0);
+      expect(delta['surfaceInits'], 0);
+      expect(delta['pageBuilds'], 0);
+      expect(layersAfter, layersBefore);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _settle(tester, 1000);
+      tester.view.reset();
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
 }
