@@ -39,6 +39,7 @@ class LeafViewerScope extends InheritedWidget {
     this.pageCount = 0,
     this.goToPage,
     this.focusNode,
+    this.dismissProgress,
     super.key,
     required super.child,
   });
@@ -65,6 +66,9 @@ class LeafViewerScope extends InheritedWidget {
 
   /// The viewer's key focus (a settled video takes focus only from it).
   final FocusNode? focusNode;
+
+  /// The dismiss drag's progress in `[0, 1]`.
+  final ValueListenable<double>? dismissProgress;
 
   static LeafViewerScope? maybeOf(BuildContext context) {
     return context.dependOnInheritedWidgetOfExactType<LeafViewerScope>();

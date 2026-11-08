@@ -43,6 +43,8 @@ class LeafViewer extends StatefulWidget {
     this.scrollDirection = Axis.horizontal,
     this.onPageChanged,
     this.dismissEnabled = true,
+    this.dismissDirection = LeafDismissDirection.both,
+    this.onSwipeUp,
     this.onDismissed,
     this.onTapOutside,
     this.backgroundBuilder,
@@ -60,6 +62,18 @@ class LeafViewer extends StatefulWidget {
   final Axis scrollDirection;
   final ValueChanged<int>? onPageChanged;
   final bool dismissEnabled;
+
+  /// Which drags dismiss: both ways along the cross axis (default), or only
+  /// [LeafDismissDirection.down] (down for horizontal pagers, right for
+  /// vertical ones), which leaves the other way to [onSwipeUp].
+  final LeafDismissDirection dismissDirection;
+
+  /// With [LeafDismissDirection.down]: a drag the other way (up for
+  /// horizontal pagers) on an unzoomed page calls this when it ends, e.g.
+  /// to open a details sheet. Drags that start on a control that claims
+  /// them first (a seek bar) never get here.
+  final VoidCallback? onSwipeUp;
+
   final VoidCallback? onDismissed;
   final VoidCallback? onTapOutside;
 
@@ -112,8 +126,26 @@ class LeafViewer extends StatefulWidget {
     return LeafViewerScope.maybeOf(context)?.chrome;
   }
 
+  /// The dismiss drag's progress in `[0, 1]` (what [backgroundBuilder]
+  /// gets), if inside a viewer. Page layers that stand in for the backdrop,
+  /// such as a loading scrim, fade with it so a page dismisses like the
+  /// backdrop does.
+  static ValueListenable<double>? dismissProgressOf(BuildContext context) {
+    return LeafViewerScope.maybeOf(context)?.dismissProgress;
+  }
+
   @override
   State<LeafViewer> createState() => _LeafViewerState();
+}
+
+/// The drags that dismiss a [LeafViewer].
+enum LeafDismissDirection {
+  /// Either way along the cross axis.
+  both,
+
+  /// Down only (right for vertical pagers); the other way goes to
+  /// [LeafViewer.onSwipeUp].
+  down,
 }
 
 /// State passed to [LeafViewer.controlsBuilder].
@@ -136,11 +168,13 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
   final Map<int, LeafZoomController> _controllers = {};
   final ValueNotifier<int> _indexNotifier = ValueNotifier(0);
   final ValueNotifier<int> _settledIndex = ValueNotifier(0);
+  final ValueNotifier<double> _dismissProgressNotifier = ValueNotifier(0);
   final FirstFrameGate _firstFrameGate = FirstFrameGate(maxConcurrent: 1);
   final FocusNode _focusNode = FocusNode();
 
   int _currentIndex = 0;
   bool _dismissing = false;
+  bool _swipingUp = false;
   Size _viewerSize = Size.zero;
   LeafViewerChrome? _chrome;
 
@@ -183,7 +217,8 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _indexNotifier.value = _currentIndex;
     _settledIndex.value = _currentIndex;
     _pageController = widget.pageController ?? PageController(initialPage: _currentIndex);
-    _dismissCtrl = AnimationController.unbounded(vsync: this);
+    _dismissCtrl = AnimationController.unbounded(vsync: this)
+      ..addListener(() => _dismissProgressNotifier.value = _dismissProgress);
     if (widget.enableChrome) {
       _chrome = LeafViewerChrome(autoHide: !leafIsDesktopPlatform());
     }
@@ -195,6 +230,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _dismissCtrl.dispose();
     _indexNotifier.dispose();
     _settledIndex.dispose();
+    _dismissProgressNotifier.dispose();
     _chrome?.dispose();
     if (widget.pageController == null) _pageController.dispose();
     super.dispose();
@@ -242,25 +278,62 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
 
   Offset get _dismissOffsetVector => widget.scrollDirection == Axis.horizontal ? Offset(0, _dismissOffset) : Offset(_dismissOffset, 0);
 
-  void _onDismissStart(DragStartDetails details) {
+  bool get _downOnly => widget.dismissDirection == LeafDismissDirection.down;
+
+  /// Whether the dismiss recognizer may take a drag heading [forward] (down
+  /// for horizontal pagers).
+  bool _allowDrag(bool forward) {
+    if (forward || !_downOnly) return true;
+    if (widget.onSwipeUp == null) return false;
+    return !(_activeController?.zoomed ?? false);
+  }
+
+  void _onDismissStart(DragStartDetails details, bool forward) {
+    _swipingUp = _downOnly && !forward;
+    if (_swipingUp) return;
     _activeController?.cancelGesture();
   }
 
   void _onDismissUpdate(DragUpdateDetails details) {
-    _dismissCtrl.value += widget.scrollDirection == Axis.horizontal ? details.delta.dy : details.delta.dx;
+    if (_swipingUp) return;
+    final next = _dismissCtrl.value + (widget.scrollDirection == Axis.horizontal ? details.delta.dy : details.delta.dx);
+    _dismissCtrl.value = _downOnly && next < 0 ? 0 : next;
   }
 
   void _onDismissEnd(DragEndDetails details) {
+    if (_swipingUp) {
+      _swipingUp = false;
+      widget.onSwipeUp?.call();
+      return;
+    }
     _endDismissDrag(details.primaryVelocity ?? 0);
+  }
+
+  void _setUpDismissDrag(_DirectionalDrag r) {
+    r
+      ..allow = _allowDrag
+      ..onStart = ((details) => _onDismissStart(details, r.forward))
+      ..onUpdate = _onDismissUpdate
+      ..onEnd = _onDismissEnd
+      ..onCancel = _onDismissCancel;
+  }
+
+  void _onDismissCancel() {
+    if (_swipingUp) {
+      _swipingUp = false;
+      return;
+    }
+    _endDismissDrag(0);
   }
 
   void _endDismissDrag(double velocity) {
     if (_dismissing || !widget.dismissEnabled) return;
     final offset = _dismissCtrl.value;
     final extent = _dismissExtent;
-    if (velocity.abs() > 800 || offset.abs() > extent * 0.25) {
+    final committed = _downOnly ? velocity > 800 || offset > extent * 0.25 : velocity.abs() > 800 || offset.abs() > extent * 0.25;
+    if (committed) {
       _dismissing = true;
-      final dir = velocity.abs() > 50 ? velocity.sign : (offset.sign == 0 ? 1.0 : offset.sign);
+      final dir = _downOnly ? 1.0 : (velocity.abs() > 50 ? velocity.sign : (offset.sign == 0 ? 1.0 : offset.sign));
       _dismissCtrl.animateTo(dir * extent * 1.5, duration: const Duration(milliseconds: 200), curve: Curves.easeIn).then((_) {
         if (!mounted) return;
         final onDismissed = widget.onDismissed;
@@ -363,6 +436,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
         pageCount: widget.pageCount,
         goToPage: _goToPage,
         focusNode: _focusNode,
+        dismissProgress: _dismissProgressNotifier,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -382,14 +456,23 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
             Listener(
               behavior: HitTestBehavior.opaque,
               onPointerSignal: _onPointerSignal,
-              child: GestureDetector(
-                onVerticalDragStart: horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
-                onVerticalDragUpdate: horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
-                onVerticalDragEnd: horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
-                onHorizontalDragStart: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissStart : null,
-                onHorizontalDragUpdate: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissUpdate : null,
-                onHorizontalDragEnd: !horizontal && widget.dismissEnabled && swipeMode ? _onDismissEnd : null,
-                onTapUp: _onTapUp,
+              child: RawGestureDetector(
+                gestures: {
+                  if (widget.dismissEnabled && swipeMode && horizontal)
+                    _VerticalDismissDrag: GestureRecognizerFactoryWithHandlers<_VerticalDismissDrag>(
+                      () => _VerticalDismissDrag(debugOwner: this),
+                      _setUpDismissDrag,
+                    ),
+                  if (widget.dismissEnabled && swipeMode && !horizontal)
+                    _HorizontalDismissDrag: GestureRecognizerFactoryWithHandlers<_HorizontalDismissDrag>(
+                      () => _HorizontalDismissDrag(debugOwner: this),
+                      _setUpDismissDrag,
+                    ),
+                  TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+                    () => TapGestureRecognizer(debugOwner: this),
+                    (r) => r.onTapUp = _onTapUp,
+                  ),
+                },
                 child: AnimatedBuilder(
                   animation: _dismissCtrl,
                   child: pager,
@@ -424,6 +507,54 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
         ),
       ),
     );
+  }
+}
+
+/// A dismiss drag that accepts only when [allow] lets its direction
+/// through, and records that direction in [forward] (down / right) before
+/// the drag starts.
+abstract interface class _DirectionalDrag implements GestureRecognizer {
+  set allow(bool Function(bool forward) value);
+  bool get forward;
+  set onStart(GestureDragStartCallback? value);
+  set onUpdate(GestureDragUpdateCallback? value);
+  set onEnd(GestureDragEndCallback? value);
+  set onCancel(GestureDragCancelCallback? value);
+}
+
+bool _allowAll(bool _) => true;
+
+class _VerticalDismissDrag extends VerticalDragGestureRecognizer implements _DirectionalDrag {
+  _VerticalDismissDrag({super.debugOwner});
+
+  @override
+  bool Function(bool forward) allow = _allowAll;
+  @override
+  bool forward = true;
+
+  @override
+  bool hasSufficientGlobalDistanceToAccept(PointerDeviceKind pointerDeviceKind, double? deviceTouchSlop) {
+    if (!super.hasSufficientGlobalDistanceToAccept(pointerDeviceKind, deviceTouchSlop)) return false;
+    if (!allow(globalDistanceMoved > 0)) return false;
+    forward = globalDistanceMoved > 0;
+    return true;
+  }
+}
+
+class _HorizontalDismissDrag extends HorizontalDragGestureRecognizer implements _DirectionalDrag {
+  _HorizontalDismissDrag({super.debugOwner});
+
+  @override
+  bool Function(bool forward) allow = _allowAll;
+  @override
+  bool forward = true;
+
+  @override
+  bool hasSufficientGlobalDistanceToAccept(PointerDeviceKind pointerDeviceKind, double? deviceTouchSlop) {
+    if (!super.hasSufficientGlobalDistanceToAccept(pointerDeviceKind, deviceTouchSlop)) return false;
+    if (!allow(globalDistanceMoved > 0)) return false;
+    forward = globalDistanceMoved > 0;
+    return true;
   }
 }
 

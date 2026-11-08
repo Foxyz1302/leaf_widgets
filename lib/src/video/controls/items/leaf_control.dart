@@ -7,6 +7,7 @@ import '../leaf_controls_theme.dart';
 import '../leaf_controls_visibility.dart';
 import '../leaf_player_command.dart';
 import '../leaf_player_controller.dart';
+import '../leaf_player_defaults.dart';
 import '../leaf_player_keymap.dart';
 import '../media_math.dart';
 import 'chapter_items.dart';
@@ -91,6 +92,15 @@ class LeafPlayerScope extends InheritedWidget {
       context.dependOnInheritedWidgetOfExactType<LeafPlayerScope>()?.data;
 
   static LeafControlContext of(BuildContext context) => maybeOf(context)!;
+
+  /// The controls' theme here: the host's, else (outside a player, e.g. an
+  /// image page's bar that should match) `LeafPlayerDefaults.theme`, the
+  /// `Theme` extension, then the Material look's defaults.
+  static LeafControlsTheme themeOf(BuildContext context) =>
+      maybeOf(context)?.theme ??
+      LeafPlayerDefaults.maybeOf(context)?.theme ??
+      Theme.of(context).extension<LeafControlsTheme>() ??
+      LeafControlsTheme.forLook(LeafLook.material, Theme.of(context).colorScheme);
 
   @override
   bool updateShouldNotify(LeafPlayerScope oldWidget) =>
@@ -372,7 +382,7 @@ class _LeafControlButtonState extends State<LeafControlButton> {
 
   @override
   Widget build(BuildContext context) {
-    final t = LeafPlayerScope.of(context).theme;
+    final t = LeafPlayerScope.themeOf(context);
     final w = widget;
     final enabled = w.onPressed != null;
     final flat = t.buttonLook == LeafButtonLook.flat;
@@ -456,7 +466,7 @@ class LeafCapsule extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = LeafPlayerScope.of(context).theme;
+    final t = LeafPlayerScope.themeOf(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: t.capsuleFill,

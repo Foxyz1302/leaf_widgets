@@ -19,6 +19,8 @@ Widget _harness({
   VoidCallback? onTapOutside,
   ValueChanged<double>? onProgress,
   bool? enableSwipeGestures,
+  LeafDismissDirection dismissDirection = LeafDismissDirection.both,
+  VoidCallback? onSwipeUp,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -29,6 +31,8 @@ Widget _harness({
         onDismissed: onDismissed,
         onTapOutside: onTapOutside,
         enableSwipeGestures: enableSwipeGestures,
+        dismissDirection: dismissDirection,
+        onSwipeUp: onSwipeUp,
         backgroundBuilder: onProgress == null
             ? null
             : (context, p) {
@@ -220,6 +224,38 @@ void main() {
     await tester.pumpAndSettle();
     expect(dismissed, isTrue);
     expect(sawProgress, isTrue);
+  });
+
+  testWidgets('down-only: an upward drag calls onSwipeUp and does not dismiss', (tester) async {
+    var dismissed = false;
+    var swipedUp = 0;
+    double maxProgress = 0;
+    await tester.pumpWidget(_harness(
+      onDismissed: () => dismissed = true,
+      onSwipeUp: () => swipedUp++,
+      dismissDirection: LeafDismissDirection.down,
+      onProgress: (p) => maxProgress = p > maxProgress ? p : maxProgress,
+    ));
+    await tester.timedDrag(find.byType(LeafViewer), const Offset(0, -400), const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(dismissed, isFalse);
+    expect(swipedUp, 1);
+    expect(maxProgress, 0);
+
+    await tester.timedDrag(find.byType(LeafViewer), const Offset(0, 400), const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(dismissed, isTrue);
+    expect(swipedUp, 1);
+  });
+
+  testWidgets('down-only: zoomed pages do not swipe up', (tester) async {
+    var swipedUp = 0;
+    await tester.pumpWidget(_harness(onSwipeUp: () => swipedUp++, dismissDirection: LeafDismissDirection.down));
+    _controller(tester).doubleTap(const Offset(400, 300));
+    await tester.pumpAndSettle();
+    await tester.timedDrag(find.byType(LeafViewer), const Offset(0, -400), const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(swipedUp, 0);
   });
 
   testWidgets('1× fast small drag flies off via velocity', (tester) async {
