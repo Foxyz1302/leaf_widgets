@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -164,8 +163,6 @@ void main() {
     final adapter = FakeAdapter()..playing = true;
     await tester.pumpWidget(harness(adapter, hideDelay: const Duration(hours: 1)));
     await tester.pump();
-    final bar = tester.renderObject(find.ancestor(of: find.byType(LeafScrubber), matching: find.byType(Column)).first);
-    final barId = describeIdentity(bar);
     adapter.emitPosition(const Duration(seconds: 20));
     await tester.pump();
     await tester.pump();
@@ -189,8 +186,7 @@ void main() {
       debugPrintLayouts = false;
       debugOnProfilePaint = null;
     }
-    expect(laidOut, isNotEmpty);
-    expect(laidOut.where((line) => line.contains(barId)), isEmpty);
+    expect(laidOut, isEmpty);
     expect(timeTextPaints, 0);
     await tester.pumpWidget(const SizedBox.shrink());
   });
