@@ -192,3 +192,26 @@ class _CountingSurfaceState extends State<CountingSurface> {
   @override
   Widget build(BuildContext context) => const ColoredBox(color: Color(0xFF101010), key: ValueKey('counting-surface'));
 }
+
+/// The controls over a black box of [size].
+Widget kitHarness(LeafPlayerController controller, {LeafControlsSpec? spec, Size size = const Size(800, 450), bool fullscreen = false}) =>
+    MaterialApp(
+      home: Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: Colors.black),
+                LeafPlayerControls(controller: controller, spec: spec, isFullscreen: fullscreen),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+Duration secs(num s) => Duration(milliseconds: (s * 1000).round());

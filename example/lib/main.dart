@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:leaf_widgets/leaf_widgets.dart';
 
+import 'video_controls_demo.dart';
 import 'viewer_demo.dart';
 
 void main() {
@@ -119,6 +120,14 @@ class _GalleryHomeState extends State<_GalleryHome> {
                   children: [const Icon(Icons.error_outline), TextButton(onPressed: retry, child: const Text('Retry'))],
                 ),
               ),
+            ),
+          ),
+          _Section(
+            title: 'Video controls kit',
+            child: FilledButton.icon(
+              icon: const Icon(Icons.smart_display_outlined),
+              label: const Text('Open the controls demo'),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const VideoControlsDemoPage())),
             ),
           ),
           _Section(

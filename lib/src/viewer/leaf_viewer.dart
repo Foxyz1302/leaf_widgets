@@ -359,6 +359,10 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
         currentIndex: _settledIndex,
         chrome: _chrome,
         firstFrameGate: _firstFrameGate,
+        axis: widget.scrollDirection,
+        pageCount: widget.pageCount,
+        goToPage: _goToPage,
+        focusNode: _focusNode,
         child: Stack(
           fit: StackFit.expand,
           children: [

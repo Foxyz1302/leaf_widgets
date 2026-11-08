@@ -309,3 +309,29 @@ LeafFitResult fitBar({
   }
   return result();
 }
+
+/// The parts not downloaded yet, as fractions (from, to): everything
+/// outside [ranges] (slivers under half a second left out); without
+/// ranges, from the cache end ([uncachedFrom]) to the end.
+List<(double, double)> uncachedParts({
+  List<LeafTimeRange>? ranges,
+  required Duration position,
+  required Duration buffered,
+  required Duration duration,
+}) {
+  if (duration <= Duration.zero) return const [];
+  if (ranges == null || ranges.isEmpty) {
+    final from = uncachedFrom(position: position, buffered: buffered, duration: duration);
+    return from == null ? const [] : [(from, 1.0)];
+  }
+  const sliver = Duration(milliseconds: 500);
+  final sorted = [...ranges]..sort((a, b) => a.start.compareTo(b.start));
+  final parts = <(double, double)>[];
+  var at = Duration.zero;
+  for (final r in sorted) {
+    if (r.start - at > sliver) parts.add((timelineFraction(at, duration), timelineFraction(r.start, duration)));
+    if (r.end > at) at = r.end;
+  }
+  if (duration - at > sliver) parts.add((timelineFraction(at, duration), 1.0));
+  return parts;
+}

@@ -239,3 +239,38 @@ class _FramePainter extends CustomPainter {
   @override
   bool shouldRepaint(_FramePainter oldDelegate) => oldDelegate.seed != seed || oldDelegate.frame != frame;
 }
+
+/// [BenchVideoAdapter] with the capabilities the controls kit reads: volume
+/// (the volume item, wheel, readout) and chapters (the chapter buttons and
+/// marks).
+class BenchKitAdapter extends BenchVideoAdapter with HasVolume, HasChapters {
+  BenchKitAdapter({required super.seed});
+
+  final _volume = StreamController<double>.broadcast();
+  double _level = 100;
+
+  @override
+  Stream<double> get volumeStream => _volume.stream;
+  @override
+  double get volume => _level;
+  @override
+  void setVolume(double volume) {
+    _level = volume;
+    _volume.add(volume);
+  }
+
+  @override
+  Stream<List<LeafChapter>> get chaptersStream => const Stream.empty();
+  @override
+  List<LeafChapter> get chapters => const [
+    LeafChapter(index: 0, title: 'Intro', start: Duration.zero, end: Duration(seconds: 10)),
+    LeafChapter(index: 1, title: 'Main', start: Duration(seconds: 10), end: Duration(seconds: 50)),
+    LeafChapter(index: 2, title: 'Credits', start: Duration(seconds: 50), end: Duration(seconds: 60)),
+  ];
+
+  @override
+  void dispose() {
+    _volume.close();
+    super.dispose();
+  }
+}

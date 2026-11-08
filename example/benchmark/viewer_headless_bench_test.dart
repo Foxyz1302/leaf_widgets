@@ -1,84 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:example/bench/bench_video_adapter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leaf_widgets/leaf_widgets.dart';
 
-class _Probe {
-  int rebuilds = 0;
-  int newElements = 0;
-  int layouts = 0;
-  int paints = 0;
-  final _seen = Expando<bool>();
-  late DebugPrintCallback _savedPrint;
-
-  void install() {
-    debugOnRebuildDirtyWidget = (element, _) {
-      rebuilds++;
-      if (_seen[element] == null) {
-        _seen[element] = true;
-        newElements++;
-      }
-    };
-    debugOnProfilePaint = (_) => paints++;
-    debugPrintLayouts = true;
-    _savedPrint = debugPrint;
-    final saved = _savedPrint;
-    debugPrint = (String? message, {int? wrapWidth}) {
-      if (message != null && message.startsWith('Laying out')) {
-        layouts++;
-        return;
-      }
-      saved(message, wrapWidth: wrapWidth);
-    };
-  }
-
-  void uninstall() {
-    debugOnRebuildDirtyWidget = null;
-    debugOnProfilePaint = null;
-    debugPrintLayouts = false;
-    debugPrint = _savedPrint;
-  }
-}
-
-class _Phase {
-  _Phase(this.name);
-
-  final String name;
-  final rebuilds = <int>[];
-  final newElements = <int>[];
-  final layouts = <int>[];
-  final paints = <int>[];
-  int tickingFrames = 0;
-  Map<String, int> counters = const {};
-
-  static Map<String, num> _dist(List<int> values) {
-    if (values.isEmpty) return {'total': 0};
-    final sorted = [...values]..sort();
-    return {
-      'total': values.fold(0, (a, b) => a + b),
-      'perFrame': double.parse((values.fold(0, (a, b) => a + b) / values.length).toStringAsFixed(1)),
-      'p90': sorted[((sorted.length - 1) * 0.9).round()],
-      'max': sorted.last,
-    };
-  }
-
-  Map<String, Object> toJson() => {
-    'frames': rebuilds.length,
-    'tickingFrames': tickingFrames,
-    'rebuilds': _dist(rebuilds),
-    'newElements': _dist(newElements),
-    'layouts': _dist(layouts),
-    'paints': _dist(paints),
-    'counters': counters,
-  };
-}
+import 'bench_probe.dart';
 
 class _TestImage extends ImageProvider<_TestImage> {
   const _TestImage(this.id, this.image);
@@ -148,27 +78,6 @@ const _layout = [
   _Kind.video,
 ];
 
-void _report(String name, Object data) => debugPrint('HEADLESS_BENCH $name ${jsonEncode(data)}');
-
-Map<String, int> _layerCounts(Layer root) {
-  final counts = <String, int>{};
-  void visit(Layer layer) {
-    counts.update('all', (v) => v + 1, ifAbsent: () => 1);
-    if (layer is ShaderMaskLayer) counts.update('shaderMask', (v) => v + 1, ifAbsent: () => 1);
-    if (layer is OpacityLayer) counts.update('opacity', (v) => v + 1, ifAbsent: () => 1);
-    if (layer is ContainerLayer) {
-      var child = layer.firstChild;
-      while (child != null) {
-        visit(child);
-        child = child.nextSibling;
-      }
-    }
-  }
-
-  visit(root);
-  return counts;
-}
-
 void main() {
   testWidgets('swipe workload: rebuilds, layouts, paints and player lifecycle per phase', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
@@ -223,14 +132,14 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 1));
 
-    final probe = _Probe()..install();
-    final phases = <_Phase>[];
-    late _Phase phase;
+    final probe = BenchProbe()..install();
+    final phases = <BenchPhase>[];
+    late BenchPhase phase;
     var startCounters = BenchCounters.snapshot();
     var clockMs = 0;
 
     void begin(String name) {
-      phase = _Phase(name);
+      phase = BenchPhase(name);
       phases.add(phase);
       startCounters = BenchCounters.snapshot();
       BenchCounters.resetPeaks();
@@ -239,7 +148,7 @@ void main() {
     void end() {
       final now = BenchCounters.snapshot();
       phase.counters = {for (final e in now.entries) e.key: e.value - (startCounters[e.key] ?? 0), ...BenchCounters.peaks()};
-      phase = _Phase('gap');
+      phase = BenchPhase('gap');
     }
 
     Future<void> frame(int ms) async {
@@ -302,7 +211,7 @@ void main() {
       );
       await settle(2000);
       end();
-      _report('layers-after-open', _layerCounts(tester.binding.renderViews.first.debugLayer!));
+      benchReport('layers-after-open', benchLayerCounts(tester.binding.renderViews.first.debugLayer!));
 
       final size = tester.getSize(find.byType(LeafViewer));
       final center = size.center(Offset.zero);
@@ -391,9 +300,9 @@ void main() {
       final hiddenWasHidden = !chrome.visible;
       chrome.show();
       final visible = await idle('playing-chrome-visible');
-      _report('playing-chrome-hidden', {'chromeHidden': hiddenWasHidden, ...hidden});
-      _report('playing-chrome-visible', visible);
-      _report('layers-end', _layerCounts(tester.binding.renderViews.first.debugLayer!));
+      benchReport('playing-chrome-hidden', {'chromeHidden': hiddenWasHidden, ...hidden});
+      benchReport('playing-chrome-visible', visible);
+      benchReport('layers-end', benchLayerCounts(tester.binding.renderViews.first.debugLayer!));
     } finally {
       probe.uninstall();
       BenchCounters.scrollProbe = null;
@@ -401,12 +310,12 @@ void main() {
     }
 
     for (final p in phases.where((p) => !p.name.startsWith('playing'))) {
-      _report(p.name, p.toJson());
+      benchReport(p.name, p.toJson());
     }
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
-    _report('lifecycle-totals', BenchCounters.snapshot());
+    benchReport('lifecycle-totals', BenchCounters.snapshot());
     imageCache.clear();
   });
 
@@ -423,7 +332,7 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    final probe = _Probe()..install();
+    final probe = BenchProbe()..install();
     final emittedBefore = provider.emitted;
     try {
       for (var i = 0; i < 60; i++) {
@@ -433,7 +342,7 @@ void main() {
       probe.uninstall();
     }
     final emitted = provider.emitted - emittedBefore;
-    _report('animated-image', {
+    benchReport('animated-image', {
       'imageFrames': emitted,
       'rebuilds': probe.rebuilds,
       'rebuildsPerImageFrame': double.parse((probe.rebuilds / emitted).toStringAsFixed(1)),
@@ -524,7 +433,7 @@ void main() {
         prepare: (tester) => LeafViewer.controllerOf(tester.element(find.byType(LeafZoomable).first))!..scaleUpdate(3, Offset.zero, Offset.zero),
       ),
     ];
-    _report('arena', results);
+    benchReport('arena', results);
     imageCache.clear();
   });
 
@@ -570,7 +479,7 @@ void main() {
         ),
       ),
     ];
-    _report('decode', {'viewportPx': '1080x2400', 'sourcePx': '4000x3000', 'results': results});
+    benchReport('decode', {'viewportPx': '1080x2400', 'sourcePx': '4000x3000', 'results': results});
 
     imageCache
       ..clear()
@@ -599,7 +508,7 @@ void main() {
     await tester.pump();
     final back = await shown();
     await tester.pumpWidget(const SizedBox.shrink());
-    _report('decode-zoom-cycle', {'path': 'LeafZoomable.image', 'at1x': at1x, 'zoomed3x': zoomed, 'back1x': back});
+    benchReport('decode-zoom-cycle', {'path': 'LeafZoomable.image', 'at1x': at1x, 'zoomed3x': zoomed, 'back1x': back});
     imageCache.clear();
   });
 
@@ -635,7 +544,7 @@ void main() {
         readyMs.putIfAbsent('page$seed', () => t);
       }
     }
-    _report('open-first-frames', {
+    benchReport('open-first-frames', {
       'activePage': 2,
       'peakConcurrentFirstFrames': BenchCounters.peakDecoding,
       'firstFrameAtMs': readyMs,
@@ -666,7 +575,7 @@ void main() {
       for (var t = 0; t < 1500; t += 16) {
         await tester.pump(const Duration(milliseconds: 16));
       }
-      final probe = _Probe()..install();
+      final probe = BenchProbe()..install();
       var wanted = 0, ticking = 0;
       const slots = 125;
       final r0 = probe.rebuilds, l0 = probe.layouts, p0 = probe.paints;
@@ -694,7 +603,7 @@ void main() {
       };
     }
 
-    _report('desktop-controls', [
+    benchReport('desktop-controls', [
       await measure('bar hidden', const Duration(milliseconds: 500)),
       await measure('bar visible', const Duration(hours: 1)),
     ]);

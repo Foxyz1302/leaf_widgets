@@ -35,6 +35,10 @@ class LeafViewerScope extends InheritedWidget {
     required this.currentIndex,
     this.chrome,
     this.firstFrameGate,
+    this.axis = Axis.horizontal,
+    this.pageCount = 0,
+    this.goToPage,
+    this.focusNode,
     super.key,
     required super.child,
   });
@@ -51,6 +55,16 @@ class LeafViewerScope extends InheritedWidget {
 
   /// Lets one neighbour video at a time do its first-frame decode.
   final FirstFrameGate? firstFrameGate;
+
+  /// The paging axis (the video controls leave its bare arrows to paging).
+  final Axis axis;
+  final int pageCount;
+
+  /// Animates to a page (next/previous on a video page without its own).
+  final void Function(int index)? goToPage;
+
+  /// The viewer's key focus (a settled video takes focus only from it).
+  final FocusNode? focusNode;
 
   static LeafViewerScope? maybeOf(BuildContext context) {
     return context.dependOnInheritedWidgetOfExactType<LeafViewerScope>();
