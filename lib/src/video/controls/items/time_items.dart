@@ -4,12 +4,14 @@ import '../leaf_controls_theme.dart';
 import '../leaf_player_command.dart';
 import '../leaf_player_controller.dart';
 import '../media_math.dart';
+import '../smooth_position.dart';
 import 'leaf_control.dart';
 import 'seek_bar.dart';
 
 /// The clock: "6:00 / 24:00" or "-18:00" (the prefs' format; a click
 /// switches), elapsed only when the bar is tight. A fixed-width box at its
-/// widest text with its own repaint boundary, rebuilt once a second.
+/// widest text with its own repaint boundary, rebuilt once a second of the
+/// smoothed position (the seek bar's, so the two agree).
 class LeafTimeControl extends LeafControl {
   const LeafTimeControl();
 
@@ -70,9 +72,9 @@ class _Clock extends StatelessWidget {
                 height: c.theme.scaledButton,
                 child: RepaintBoundary(
                   child: Center(
-                    child: ValueListenableBuilder<int>(
-                      valueListenable: ctrl.positionSeconds,
-                      builder: (context, secs, _) => Text(
+                    child: _SmoothSeconds(
+                      controller: ctrl,
+                      builder: (context, secs) => Text(
                         leafClockText(Duration(seconds: secs), d, format),
                         maxLines: 1,
                         softWrap: false,
@@ -89,6 +91,66 @@ class _Clock extends StatelessWidget {
       },
     );
   }
+}
+
+/// Rebuilds [builder] when the whole second of the controller's smoothed
+/// position changes.
+class _SmoothSeconds extends StatefulWidget {
+  const _SmoothSeconds({required this.controller, required this.builder});
+
+  final LeafPlayerController controller;
+  final Widget Function(BuildContext context, int seconds) builder;
+
+  @override
+  State<_SmoothSeconds> createState() => _SmoothSecondsState();
+}
+
+class _SmoothSecondsState extends State<_SmoothSeconds> {
+  late LeafSmoothPosition _smooth;
+  late int _secs;
+
+  static double _stepMs() => 1000;
+
+  @override
+  void initState() {
+    super.initState();
+    _attach();
+  }
+
+  void _attach() {
+    _smooth = LeafSmoothPosition.of(widget.controller)
+      ..want(this, _stepMs)
+      ..addListener(_onTick);
+    _secs = _smooth.value.inSeconds;
+  }
+
+  void _detach() {
+    _smooth
+      ..removeListener(_onTick)
+      ..release(this);
+  }
+
+  @override
+  void didUpdateWidget(_SmoothSeconds oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.controller, widget.controller)) return;
+    _detach();
+    _attach();
+  }
+
+  @override
+  void dispose() {
+    _detach();
+    super.dispose();
+  }
+
+  void _onTick() {
+    final secs = _smooth.value.inSeconds;
+    if (secs != _secs) setState(() => _secs = secs);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _secs);
 }
 
 /// A 2 px progress line while the controls are hidden (prefs can switch it

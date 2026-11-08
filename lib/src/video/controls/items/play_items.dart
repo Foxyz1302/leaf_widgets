@@ -293,3 +293,46 @@ class LeafSeekByControl extends LeafControl {
     },
   );
 }
+
+/// The playback speed as a label ("1.5×"); a tap steps through [rates]
+/// (wrapping). Only with a player that has a rate.
+class LeafSpeedControl extends LeafControl {
+  const LeafSpeedControl({this.rates = const [1.0, 1.25, 1.5, 2.0, 0.5, 0.75]});
+
+  final List<double> rates;
+
+  @override
+  String get id => 'speed';
+
+  @override
+  int get priority => 25;
+
+  @override
+  bool isAvailable(LeafControlContext c) => c.controller.rate != null;
+
+  @override
+  double? estimatedWidth(LeafControlsTheme t) => t.scaledButton + 44 * t.scale;
+
+  static String _label(double rate) {
+    final text = rate.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+    return '$text×';
+  }
+
+  @override
+  Widget build(BuildContext context, LeafControlContext c) {
+    final rate = c.controller.rate!;
+    return ValueListenableBuilder<double>(
+      valueListenable: rate,
+      builder: (context, value, _) => LeafControlButton(
+        key: const ValueKey('leaf-control-speed'),
+        icon: Icons.speed_rounded,
+        label: _label(value),
+        tooltip: c.tip('Speed', const LeafPlayerCommand.resetRate()),
+        onPressed: () {
+          final i = rates.indexWhere((r) => (r - value).abs() < 0.01);
+          c.controller.execute(LeafPlayerCommand.setRate(rates[(i + 1) % rates.length]));
+        },
+      ),
+    );
+  }
+}

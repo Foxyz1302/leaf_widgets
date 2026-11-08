@@ -158,6 +158,7 @@ abstract class LeafControl {
   static const title = LeafTitleControl();
   static const back = LeafBackControl();
   static const seekFeedback = LeafSeekFeedbackControl();
+  static const speed = LeafSpeedControl();
   static const spacer = _SpacerControl();
 
   static LeafControl seekBy(Duration delta) => LeafSeekByControl(delta);
@@ -210,6 +211,7 @@ abstract class LeafControl {
     'title': title,
     'back': back,
     'seekFeedback': seekFeedback,
+    'speed': speed,
     'spacer': spacer,
   };
 }

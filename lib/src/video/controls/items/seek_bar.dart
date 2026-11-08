@@ -11,6 +11,7 @@ import '../leaf_controls_visibility.dart';
 import '../leaf_player_command.dart';
 import '../leaf_player_controller.dart';
 import '../media_math.dart';
+import '../smooth_position.dart';
 import 'leaf_control.dart';
 
 enum LeafSeekBarLook {
@@ -551,9 +552,19 @@ class RenderLeafSeekBar extends RenderBox implements MouseTrackerAnnotation {
   @override
   bool get isRepaintBoundary => true;
 
+  LeafSmoothPosition? _smooth;
+
+  /// The track's width in physical pixels, as last laid out (read by the
+  /// shared position from other objects' layouts, so never [size]).
+  double _widthPx = 0;
+
+  double _stepMs() => _widthPx > 0 ? _duration.inMicroseconds / 1000 / _widthPx : double.infinity;
+
   void _listen() {
     final c = _controller;
-    c.position.addListener(_onTick);
+    _smooth = LeafSmoothPosition.of(c)
+      ..want(this, _stepMs)
+      ..addListener(_onTick);
     c.pendingSeek.addListener(_onTick);
     c.duration.addListener(_onTick);
     c.buffered.addListener(_onTick);
@@ -564,7 +575,10 @@ class RenderLeafSeekBar extends RenderBox implements MouseTrackerAnnotation {
 
   void _unlisten() {
     final c = _controller;
-    c.position.removeListener(_onTick);
+    _smooth
+      ?..removeListener(_onTick)
+      ..release(this);
+    _smooth = null;
     c.pendingSeek.removeListener(_onTick);
     c.duration.removeListener(_onTick);
     c.buffered.removeListener(_onTick);
@@ -615,7 +629,7 @@ class RenderLeafSeekBar extends RenderBox implements MouseTrackerAnnotation {
 
   double get _played {
     if (_dragging) return _dragFraction;
-    return timelineFraction(_controller.pendingSeek.value ?? _controller.position.value, _duration);
+    return timelineFraction(_smooth?.value ?? _controller.pendingSeek.value ?? _controller.position.value, _duration);
   }
 
   int _px(double fraction) => (fraction * size.width * _dpr).round();
@@ -683,6 +697,8 @@ class RenderLeafSeekBar extends RenderBox implements MouseTrackerAnnotation {
   @override
   void performLayout() {
     size = computeDryLayout(constraints);
+    _widthPx = size.width * _dpr;
+    _smooth?.want(this, _stepMs);
   }
 
   @override

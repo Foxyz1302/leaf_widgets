@@ -53,6 +53,7 @@ class LeafViewer extends StatefulWidget {
     this.enableSwipeGestures,
     this.enableKeyboard = true,
     this.enableChrome = false,
+    this.chrome,
     this.showPageCounter = true,
     this.heroSource,
     this.heroTagOf,
@@ -102,6 +103,10 @@ class LeafViewer extends StatefulWidget {
   /// drives every [LeafChrome] layer plus the paging chrome below. Auto-hide
   /// applies on touch platforms only; on desktop chrome hides on tap only.
   final bool enableChrome;
+
+  /// A chrome reveal owned by the app (it disposes it), so layers outside
+  /// the viewer can follow and drive it; implies [enableChrome].
+  final LeafViewerChrome? chrome;
 
   /// Whether the default control set shows the "current / total" counter.
   /// Meaningless with huge page counts — turn off there.
@@ -230,7 +235,9 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _pageController = widget.pageController ?? PageController(initialPage: _currentIndex);
     _dismissCtrl = AnimationController.unbounded(vsync: this)
       ..addListener(() => _dismissProgressNotifier.value = _dismissProgress);
-    if (widget.enableChrome) {
+    if (widget.chrome != null) {
+      _chrome = widget.chrome;
+    } else if (widget.enableChrome) {
       _chrome = LeafViewerChrome(autoHide: !leafIsDesktopPlatform());
     }
   }
@@ -247,7 +254,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     _indexNotifier.dispose();
     _settledIndex.dispose();
     _dismissProgressNotifier.dispose();
-    _chrome?.dispose();
+    if (widget.chrome == null) _chrome?.dispose();
     if (widget.pageController == null) _pageController.dispose();
     super.dispose();
   }
