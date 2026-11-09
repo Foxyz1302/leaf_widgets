@@ -39,7 +39,8 @@ class LeafDetachedControls extends StatelessWidget {
         key: ObjectKey(ctrl),
         tween: Tween(begin: 0, end: 1),
         duration: fadeIn,
-        builder: (context, t, child) => Opacity(opacity: t, child: child),
+        // No touches until faded in.
+        builder: (context, t, child) => IgnorePointer(ignoring: t < 1, child: Opacity(opacity: t, child: child)),
         child: ValueListenableBuilder<bool>(
           valueListenable: ctrl.fullscreen,
           builder: (context, full, _) => LeafPlayerControls(controller: ctrl, spec: spec, chrome: chrome, picture: false, isFullscreen: full),

@@ -209,11 +209,16 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
     _visibility = null;
   }
 
+  bool _hasPlayed = false;
+
+  // A paused video holds the controls up, but only once it has played: a
+  // video still loading (or one arrived on by a swipe) must not pop them up.
   void _onPlaying() {
     final v = _visibility;
     if (v == null) return;
+    if (_ctrl.playing.value) _hasPlayed = true;
     final whilePaused = _spec.autoHide.whilePaused;
-    v.hold(#leafPaused, !whilePaused && !_ctrl.playing.value);
+    v.hold(#leafPaused, !whilePaused && _hasPlayed && !_ctrl.playing.value);
   }
 
   void _onHoldBy() {
@@ -604,7 +609,7 @@ class _LeafPlayerControlsState extends State<LeafPlayerControls>
   }
 }
 
-/// A region that fades with the controls and is removed once faded out.
+/// A region that fades with the controls (mounted throughout).
 /// Fully shown it adds no layer: Opacity (and FadeTransition) keep an
 /// OpacityLayer even at 1.0, [_FadeBox] does not.
 class _Fade extends StatelessWidget {
@@ -621,8 +626,10 @@ class _Fade extends StatelessWidget {
     animation: Listenable.merge([animation, shown]),
     child: ExcludeFocus(child: child),
     builder: (context, child) {
-      if (animation.value == 0) return const SizedBox.shrink();
-      return IgnorePointer(ignoring: !shown.value, child: _FadeBox(opacity: animation.value, child: child));
+      // Stays mounted (showing and hiding only changes opacity and
+      // pointers), and takes touches only once fully shown: half-faded or
+      // hidden controls never catch a touch meant for what is under them.
+      return IgnorePointer(ignoring: !shown.value || animation.value < 1, child: _FadeBox(opacity: animation.value, child: child));
     },
   );
 }
