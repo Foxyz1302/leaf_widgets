@@ -577,7 +577,7 @@ out to the destination streaming the chunks, adopt into the cache if it's
 ### 6.1 Model (`downloads.db`)
 
 ```
-roots     id, kind (mediastore|saf_tree|path), uri_or_path, label
+roots     id, kind (public_dir|saf_tree|path), uri_or_path, label
 groups    id, label, source, kind (post|creator|selection), expander_id,
           cursor, filters, state, created_at
 jobs      id, group_id, key, request_json, template, root_id, rendered_path,
@@ -652,12 +652,11 @@ dying mid-stream would restart from byte 0 there.
 |---|---|---|---|
 | LB | `Pictures/Leafbooru/` | flat | images and videos only; Pictures is where galleries look |
 | PX | `Pictures/pixiv/` | flat | images only (ugoira saves as the zip; see below) |
-| KB | `Download/Kemono/` | structured | posts carry zips, PSDs, PDFs and `post.json`; under scoped storage non-media files may only live in `Download/` or `Documents/` (6.8). With all files access KB *could* use `Pictures/`, but `Download/` keeps the same path under both permission models and doesn't put archives in a media folder. |
+| KB | `Download/Kemono/` | structured | posts carry zips, PSDs, PDFs and `post.json`; under scoped storage non-media files may only be created in `Download/` or `Documents/` without a special permission (6.8), and `Download/` also lets KB create a `.nomedia` for the hide switch. |
 
-PX ugoira: the zip is not media, so under MediaStore-only it can't go into
-`Pictures/` (6.8). Default: export ugoira as the zip into `Pictures/pixiv/`
-under all files access, or into `Download/pixiv/` under MediaStore-only.
-(Encoding to GIF/WebP/MP4 is a feature for later.)
+PX ugoira: the zip is not media, so it can't be created in `Pictures/`
+(6.8). Default: save the zip into `Download/pixiv/`. (Encoding to
+GIF/WebP/MP4, which could go to `Pictures/pixiv/`, is a feature for later.)
 
 **LB and PX: flat.** One folder per app, information in the file name:
 
@@ -774,75 +773,85 @@ doesn't index XMP keywords, so the benefit is mostly desktop.
   **copy** (default: each post folder is complete in a file explorer, which
   is the point of the layout) or **skip and reference**, listing it in
   `post.json` as `"same_as": "<relative path>"` for the browse view to
-  resolve. Hardlinks aren't available through MediaStore/SAF, and Dart has no
-  hardlink API.
-- **Atomic writes:** path and SAF roots write `<name>.part` and rename when
-  complete and verified; MediaStore inserts with `IS_PENDING = 1` and flips it
-  to 0 at the end. A killed app never leaves a half file under its real name.
-  Startup removes stale `.part` files the downloads DB doesn't own.
+  resolve. Dart has no hardlink API and FUSE shared storage doesn't
+  offer them reliably.
+- **Atomic writes:** write a temp name, rename when complete and verified
+  (details per folder in 6.8). A killed app never leaves a half file under its
+  real name. Startup removes stale temp files the downloads DB doesn't own.
 
-### 6.8 Android storage: the permission model
+### 6.8 Android storage: build on fox_utils, no permission
 
-This decides what works, so the facts first.
+**What FU already does (verified in code):** `AndroidFiles.save`
+(`lib/android_files.dart`, `FoxUtilsPlugin.java` `saveFileSync`) writes with
+plain `FileOutputStream` to
+`Environment.getExternalStoragePublicDirectory(Pictures|Downloads|Movies|Music)/<subPath>/`,
+**with no storage permission**, and calls `MediaScannerConnection.scanFile`
+only when `scan` is true. `scan: false` is the existing "hide" toggle (a
+friend uses it). Scoped storage allows this because an app may create files
+in the shared folders through the FUSE file path, subject to MediaProvider's
+per-folder type rules.
 
-**Verified (Android docs + MediaProvider behaviour):**
+**Decision: downloads build on this approach.** No all files access by
+default, no MediaStore `insert` API.
 
-1. Through MediaStore, `Pictures/` and `DCIM/` take **images and videos
-   only**; `Movies/` takes video. **Non-media files** (zip, psd, pdf, json,
-   and a `.nomedia` file, which has no media MIME) can only be created in
-   **`Download/` or `Documents/`**. MediaProvider rejects other paths with
-   "Primary directory … not allowed … allowed directories are [Download,
-   Documents]". So **an app without all files access cannot create
-   `Pictures/<app>/.nomedia`**.
-2. After a reinstall, the previous install's files are no longer "owned".
-   Reading back media needs `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` (on
-   target SDK 33+); **non-media files in `Download/` made by the previous
-   install are readable only through SAF** (docs: "Storage Access Framework
-   required for accessing other apps' downloads").
-3. A `.nomedia` in a **top-level** standard folder (`Pictures/`, `Music/` …)
-   is ignored or removed on Android 11+; in an **app subfolder**
-   (`Pictures/<app>/.nomedia`) it works, except in protected camera folders
-   (Android 12+).
-4. `MANAGE_EXTERNAL_STORAGE` (all files access) gives plain `dart:io` access to
-   shared storage, any file type, any folder. The Play Store only allows it
-   for file-manager-type apps; these apps are sideloaded, so it's available.
+- LB, PX → `Pictures/<app>/` (flat). KB → `Download/Kemono/…` (structured).
+- **Streaming, not `Uint8List`.** `save` takes the whole file as bytes over
+  the method channel, so a 1 GB video would sit in memory twice. Fix in FU
+  (flag: needs doing before phase 1 downloads):
+  - `AndroidFiles.publicDir(location) → String` (the absolute path), so the
+    **store isolate writes with `dart:io`** directly (`<name>.part` → rename),
+    streaming from the cache blob, the partial's chunks, or the network.
+    Dart's `File` goes through the same FUSE path as Java's
+    `FileOutputStream` in the same process, so the same rules apply (confirm
+    on device with the first build).
+  - `AndroidFiles.scan(paths)` for the visible mode, called after the rename.
+  - Optional `saveFromPath(path, …)` (native stream copy) if the `dart:io`
+    route misbehaves on some device.
+- **Type rules (Android 11+):** `Pictures/` and `DCIM/` accept only image and
+  video files; `Movies/` video; **non-media (zip, psd, pdf, json, `.nomedia`)
+  only in `Download/` or `Documents/`** (MediaProvider: "allowed directories
+  are [Download, Documents]"). That is why KB lives in `Download/`, and why
+  PX ugoira zips go to `Download/pixiv/` unless converted to video later.
+- **Atomic writes:** `<name>.part` then rename. `.part` has no media MIME, so
+  in `Pictures/` the temp name keeps the real extension instead
+  (`<name>.part.jpg` is still an image; or write `.<name>.jpg` and rename).
+  Check on device which form FUSE accepts.
 
-**Not verified, must be tested on a device before relying on it:** whether
-a file inserted *through MediaStore* into a folder that holds a `.nomedia`
-stays out of `MediaStore.Images` / `.Video` queries on Android 11–16.
-MediaProvider's scanner marks files under a `.nomedia` directory as hidden
-(media type none) so gallery queries skip them, but whether an explicit
-`insert` into such a folder follows the same rule, and whether every
-gallery app queries MediaStore rather than walking folders, is unproven.
-Test: insert an image via `MediaStore.Images` into `Download/<app>/` that
-holds a `.nomedia`, then query `MediaStore.Images` and open two gallery apps;
-repeat on the oldest and newest Android version at hand.
+**Hide from gallery** = a per-app switch, **off by default** (user
+decision):
 
-**What works under each option:**
+- On: write without `scan`, plus a `.nomedia` **where creatable**: yes in
+  `Download/<app>/` (KB), **not** in `Pictures/<app>/` (non-media type, rule
+  above).
+- **To confirm on a device (D16): does `scan: false` really keep files out of
+  gallery apps on Android 11–16?** On Android 11+ every shared-storage write
+  goes through FUSE, and MediaProvider tends to insert a row for a file
+  created through FUSE on its own, explicit scan or not. If that's the case,
+  `scan: false` only delays indexing (until the next full media scan or
+  reboot) instead of preventing it. Ask the friend what they see, or test:
+  save with `scan: false`, reboot, query `MediaStore.Images`, open two
+  gallery apps; repeat on the oldest and newest Android at hand.
+- **Fallback if it leaks:** a `.nomedia` in the folder. MediaProvider marks
+  files under a `.nomedia` directory as hidden, so gallery queries skip them
+  (also to be confirmed). Since `.nomedia` can't be created in `Pictures/`,
+  LB/PX hidden mode would then save into `Download/<app>/` with a `.nomedia`
+  there (switching moves the folder; the index makes the move cheap). A
+  `.nomedia` in a top-level standard folder is ignored on Android 11+; in an
+  app subfolder it works.
 
-| | (a) All files access | (b) MediaStore only |
+**Reading back after a reinstall** (the index rebuild):
+
+| | Without extra permission | With the optional extra |
 |---|---|---|
-| LB/PX save to `Pictures/<app>/` | yes, plain file writes + media scan | yes (`IS_PENDING` insert) |
-| "Hide from gallery" switch | `.nomedia` in `Pictures/<app>/` (or `Download/Kemono/`), then rescan the folder with `MediaScannerConnection.scanFile` so existing files drop out (or come back when switched off) | can't create `.nomedia` in `Pictures/`. Hidden mode must save into `Download/<app>/` with a `.nomedia` there, so the switch **moves** the folder (RELATIVE_PATH update per file); and whether MediaStore-inserted files are really hidden is the unverified point above |
-| KB structured `Download/Kemono/…` with zips/psd/pdf/`post.json` | yes | yes for writing (Download takes any type) |
-| KB index rebuild after reinstall (read `post.json`) | yes, `dart:io` rescan, no prompt | **no** with MediaStore alone (non-media from the old install is unreadable). Needs a one-time SAF pick of `Download/Kemono` after reinstall (allowed: a subfolder of Download, not its root), then rescans go through slow SAF listings |
-| LB/PX index rebuild after reinstall | yes | yes with `READ_MEDIA_IMAGES/VIDEO` (names carry ids) |
-| Folders moved in by hand | yes | KB: only via the SAF grant |
-| Rescan speed (thousands of files) | `dart:io`, fast | SAF `ContentResolver` queries, slow (query `DocumentsContract` children with a projection; never `DocumentFile` per file) |
-| Platform code in FU | none for I/O; one "request all files access" intent; media-scan call | streaming `saveFromPath` into MediaStore, RELATIVE_PATH moves, SAF tree ops (create, write stream, list, read) |
+| LB/PX (media, ids in names) | the previous install's files aren't "owned" any more; reading them needs `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` (runtime prompt), then the rescan works | — |
+| KB `post.json`, zips, PDFs (non-media in `Download/`) | **not readable** (docs: other apps' downloads need SAF) | (1) **SAF re-pick** of `Download/Kemono` once (a subfolder of Download is pickable, its root isn't); rescans then go through slower `ContentResolver` listings. Or (2) **all files access** (`MANAGE_EXTERNAL_STORAGE`, available because the apps are sideloaded): plain `dart:io` rescans, no re-pick. |
+| Same install, files moved in by hand | media: needs read-media permission; non-media: same as the row above | same |
 
-**Recommendation (D7): (a) all files access** for all three apps on
-Android. It's one settings grant per app, makes the hide switch a
-`.nomedia` toggle in place, keeps KB's sidecar rebuild trivial after a
-reinstall, and keeps the I/O in `dart:io` in the store isolate. Fallback if
-the user declines the grant: (b) for LB/PX (visible mode in `Pictures/<app>/`,
-hidden mode in `Download/<app>/`, pending the device test), and for KB the
-writes still work but rebuilding after a reinstall needs the SAF pick.
-
-**Privacy switch:** "Hide downloads from gallery", **per app, off by default**
-(user decision). On: `.nomedia` in the app's download root + rescan. Off:
-remove it + rescan. KB's root is a separate switch from LB/PX by nature (each
-app has its own).
+All files access and SAF are **optional extras, only for the
+rebuild-index-after-reinstall feature** (and hand-moved files); downloading,
+browsing the app's own downloads and the hide switch never need them. A
+"Rebuild index from folder" action in the downloads settings asks for one of
+them when it's used (D7).
 
 Desktop (KB Windows, PX): a chosen folder, plain paths; no gallery concern.
 
@@ -978,7 +987,8 @@ All in `leaf_browser` (the store exposes signals and queries only).
   "blocked: check user agent".
 - Browse tab (6.9).
 - Settings: "Hide from gallery" switch (per app, off by default, 6.8),
-  root folder / storage mode, per-host concurrency (≤ source max),
+  root folder, "Rebuild index from folder" (asks for SAF or all files
+  access, 6.8), per-host concurrency (≤ source max),
   Wi-Fi only, naming template per source with a preview on synthetic sample
   data, duplicate policy (KB), Rescan.
 
@@ -1025,8 +1035,8 @@ All in `leaf_browser` (the store exposes signals and queries only).
    Retry-After host pause (lands with `DESIGN.md` step 1).
 4. Downloader core: `downloads.db`, jobs, scheduler, retries, Range resume,
    templates + sanitising, flat layouts in `Pictures/<app>/`, name-parsed
-   rescan, hide-from-gallery switch, all-files-access grant (D7) or
-   MediaStore fallback.
+   rescan, hide-from-gallery switch (scan / no scan). FU gains
+   `publicDir`, `scan` (and optionally `saveFromPath`) for streaming saves.
 5. Storage screen + downloads overlay/queue.
 6. Migration in `DESIGN.md` order (LB, PX): first run deletes the old
    `flutter_cache_manager` dirs (one-time cache miss; say so in the release).
@@ -1089,9 +1099,10 @@ export.
 - Android 15's 6 h `dataSync` cap and OEM battery killers stop long bulk
   downloads in the background; jobs resume, but not unattended overnight on
   every phone.
-- Scoped storage: the MediaStore fallback can't hide `Pictures/` folders
-  and can't read KB sidecars after a reinstall without a SAF pick; whether
-  MediaStore inserts into a `.nomedia` folder stay hidden is untested.
+- Scoped storage: whether `scan: false` keeps files out of galleries on
+  Android 11+ is unconfirmed (FUSE may index on its own); the `.nomedia`
+  fallback can't live in `Pictures/`; KB sidecars from a previous install
+  are unreadable without SAF or all files access.
 - Sidecar/index drift when the user edits folders by hand: rescan fixes it,
   but the index is only as fresh as the last rescan.
 - Hashing everything costs CPU (worker isolate) and adds seconds after a big
@@ -1104,8 +1115,9 @@ export.
 
 ## 11. Decisions
 
-**Settled by the user** (defaults in this doc): cache and downloads are
-separate systems; one transfer per resource shared by display and download;
+**Settled by the user** (defaults in this doc): downloads use FU's
+no-permission public-folder writes with scan on/off as the hide toggle;
+cache and downloads are separate systems; one transfer per resource shared by display and download;
 LB/PX save flat to `Pictures/<app>/`; KB saves structured with `post.json`
 sidecars (to `Download/Kemono/`, justified in 6.5); a browse-downloads view;
 "Hide from gallery" is a per-app switch, off by default.
@@ -1136,10 +1148,11 @@ progressive decoding (2.6).
    (recommended) or `background_downloader`? Plugin or native in FU?
 6. **D6 Budgets:** thumbs 500 MB, fulls 2 GB, video 4 GB, ugoira 1 GB,
    archives 4 GB? Per-source sub-budgets exposed (only LB has two sources)?
-7. **D7 Android permission model:** (a) all files access for all three apps
-   (recommended; sideloaded), with (b) MediaStore as the fallback if a user
-   declines. Will any of these apps ever go to the Play Store? (That would
-   rule out (a).)
+7. **D7 Index rebuild after reinstall (optional extra):** downloads need no
+   permission (FU approach, settled). For KB's rebuild from `post.json`
+   after a reinstall: SAF re-pick of `Download/Kemono` (no special
+   permission, slower rescans) or all files access (sideload only, fast)?
+   Offer both, or just one?
 8. **D8 Video:** every video through the proxy (uniform headers, resolve,
    no credentials in mpv) or only when video caching is on?
 9. **D9 Abandon policy:** thumbs cancel after 500 ms grace, fulls keep going
@@ -1157,5 +1170,9 @@ progressive decoding (2.6).
     would Starsync need (not read here)?
 15. **D15 Video stopgap:** "3a" (cache after full playback, no proxy) as a
     first step, or straight to the proxy (recommended)?
-16. **D16 Device test:** run the `.nomedia` + MediaStore-insert test (6.8)
-    before committing to the fallback's hidden mode.
+16. **D16 Device test (needed before relying on the hide switch):** does
+    `scan: false` keep files out of gallery apps on Android 11–16 (ask the
+    friend, or the test in 6.8)? If not, LB/PX hidden mode moves to
+    `Download/<app>/` with a `.nomedia`: acceptable?
+17. **D17 Streaming save in FU:** `publicDir` + `scan` with `dart:io` writes
+    from the store isolate (recommended), or a native `saveFromPath`?
