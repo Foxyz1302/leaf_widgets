@@ -732,7 +732,11 @@ class _Cursor extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<bool>(
     valueListenable: visibility.visible,
     child: child,
+    // Hit only where a control is: it spans the whole player, and detached
+    // controls lie over the page's picture, which keeps its touches (taps,
+    // swipes) everywhere else.
     builder: (context, shown, child) => MouseRegion(
+      hitTestBehavior: HitTestBehavior.deferToChild,
       cursor: !shown && hideCursor ? SystemMouseCursors.none : MouseCursor.defer,
       onHover: (e) {
         if (e.kind == PointerDeviceKind.mouse) visibility.pointerMoved(e.position);

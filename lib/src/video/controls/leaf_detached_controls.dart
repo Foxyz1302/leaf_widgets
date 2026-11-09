@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../viewer/leaf_chrome.dart';
+import '../../viewer/leaf_viewer.dart';
 import '../../viewer/leaf_viewer_internal.dart';
 import 'leaf_controls_spec.dart';
 import 'leaf_player_command.dart';
@@ -75,7 +76,8 @@ class _LeafPlayerGesturesState extends State<LeafPlayerGestures> {
     final ctrl = widget.controller;
     switch (_gestures.tap) {
       case LeafTapAction.toggleControls:
-        ctrl.execute(const LeafPlayerCommand.toggleControls());
+        // No controls host attached (yet): the viewer's chrome still toggles.
+        if (!ctrl.execute(const LeafPlayerCommand.toggleControls())) LeafViewer.chromeOf(context)?.toggle();
       case LeafTapAction.togglePlay:
         ctrl.execute(const LeafPlayerCommand.togglePlay());
       case LeafTapAction.none:
