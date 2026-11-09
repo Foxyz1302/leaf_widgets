@@ -712,8 +712,11 @@ class _BarHoldState extends State<_BarHold> {
     super.dispose();
   }
 
+  // Hit only on the bar's controls: the empty space between them belongs to
+  // the picture (detached controls lie over a pager: swipes start there).
   @override
   Widget build(BuildContext context) => MouseRegion(
+    hitTestBehavior: HitTestBehavior.deferToChild,
     onEnter: (_) => widget.visibility.hold(this, true),
     onExit: (_) => widget.visibility.hold(this, false),
     child: widget.child,
