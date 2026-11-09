@@ -4,6 +4,11 @@ Status: proposal, nothing built. Read-only audit of three apps and three shared
 packages, done 2026-11-09. Code wins over this doc; where it disagrees, the doc
 is stale.
 
+Companion doc: **[`STORE.md`](STORE.md)**, the media cache + downloads design
+(transfer registry, size-budgeted cache, video proxy, downloader, download
+layouts). It supersedes the cache and download parts of sections 5.5, 5.10
+and 7 below.
+
 **What was read**
 
 | Repo | Branch / state |
@@ -126,6 +131,8 @@ app (leafbooru, pixiv_app, kemono_browser_project): sources + app-only parts
 
 - `leaf_browser` depends on `leaf_widgets`, `fox_utils`, `dio`, `signals`,
   `hive_ce`, `flutter_cache_manager`, `waterfall_flow`, `url_launcher`.
+  (`STORE.md` replaces `flutter_cache_manager` with a separate `leaf_store`
+  package: drift index, transfer registry, downloader.)
 - It does **not** depend on media_kit. Video comes in through
   `BrowserConfig.videoAdapterFactory` (a `VideoPlayerAdapter Function()`), so
   PX (no video today) doesn't pull libmpv. LB and KB pass `MediaKitAdapter`.
@@ -508,7 +515,9 @@ rendered by `LeafAsyncButton` in the bottom row, overflow by priority into a
 surfaces). Core actions: Save, Copy image, Copy link, Open in browser, Share
 (Q6), Favorite (if cap). Apps append theirs (LB fixture, KB flag/archive).
 
-Saving goes through a `DownloadManager` built from KB's design doc: per-URL
+Saving: full design in [`STORE.md`](STORE.md) §2 and §6 (one transfer per
+resource shared by viewer and download, persistent queue, layouts, Android
+storage). Original sketch: saving goes through a `DownloadManager` built from KB's design doc: per-URL
 single-flight, queue honoring `HostRule` limits, progress signals that
 survive leaving the screen, cancel, cache-aware (copy from the media cache
 when the original is already there, which LB does via `getFile`). Save
@@ -622,6 +631,9 @@ Dio(BaseOptions(timeouts 10 s connect / 30 s receive, validateStatus < 500))
 (`cache: ApiTtl.immutable | .short | none`). The media download path
 (`FileService`) shares the same `Dio`, so images get UA, cookies and limits
 for free (PX already does this: `PxFileService` uses `WebSession.dio`).
+`STORE.md` §7 refines this: the limiter is per host, shared by browsing,
+video and downloads, priority-ordered with a reserved interactive slot; media
+transfers run in a store isolate on mirror stacks.
 
 **Source-specific:** host rules, which paths are auth paths, body
 classification for 403s (KB `classifyBody`: link expired / bad signature /
@@ -731,7 +743,8 @@ core".
    `SessionStore`, `PersistedSignal`.
 2. Wrap LB's two clients as sources (`BooruClient` → `Source`; parsing stays).
    `Search` → `FeedController`.
-3. Move `CachedBooruImage` / `DioFileService` / `ImageCacheService` to the
+3. (Superseded by `STORE.md` phase 1: `leaf_store` replaces these.) Move
+   `CachedBooruImage` / `DioFileService` / `ImageCacheService` to the
    core's media cache — **rebuilt on PX's design** (request-seq guard, no disk
    delete on decode error, per-class managers: thumbs / fulls / large),
    with an AVIF decoder hook.
@@ -876,9 +889,9 @@ building.
 5. **KB post unit.** Should a KB post open in the same viewer as boorus
    (swipe between posts, files as inner pages), replacing the dialog? I
    propose yes; it's the biggest UX change for KB.
-6. **Saving.** Share sheet (needs a plugin like share_plus) — wanted? Save
-   naming and layout: flat `App/` folder, or per source/creator/post folders
-   (KB's downloads doc prefers the API layout)?
+6. **Saving.** Share sheet (needs a plugin like share_plus) — wanted? Layout
+   is now settled (LB/PX flat in `Pictures/<app>/`, KB structured with
+   sidecars); the remaining storage decisions are in `STORE.md` §11.
 7. **Credentials.** Keep plain Hive for passwords/keys/cookies (PX's
    "personal app" call), or move to secure storage for all three?
 8. **Local history.** A viewed-posts history in every app — wanted, and how
