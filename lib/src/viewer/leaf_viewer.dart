@@ -422,6 +422,7 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
     final horizontal = widget.scrollDirection == Axis.horizontal;
     final desktop = leafIsDesktopPlatform();
     final swipeMode = _swipeMode;
+    final gestureSettings = MediaQuery.maybeGestureSettingsOf(context);
     final pager = ScrollConfiguration(
       behavior: behavior.copyWith(
         dragDevices: swipeMode ? {...behavior.dragDevices, PointerDeviceKind.mouse} : behavior.dragDevices,
@@ -480,20 +481,24 @@ class _LeafViewerState extends State<LeafViewer> with TickerProviderStateMixin i
               behavior: HitTestBehavior.opaque,
               onPointerSignal: _onPointerSignal,
               child: RawGestureDetector(
+                // The device's touch slop, like the PageView's own drag (a raw
+                // recognizer gets the 18 px default and loses every race).
                 gestures: {
                   if (widget.dismissEnabled && swipeMode && horizontal)
                     _VerticalDismissDrag: GestureRecognizerFactoryWithHandlers<_VerticalDismissDrag>(
                       () => _VerticalDismissDrag(debugOwner: this),
-                      _setUpDismissDrag,
+                      (r) => _setUpDismissDrag(r..gestureSettings = gestureSettings),
                     ),
                   if (widget.dismissEnabled && swipeMode && !horizontal)
                     _HorizontalDismissDrag: GestureRecognizerFactoryWithHandlers<_HorizontalDismissDrag>(
                       () => _HorizontalDismissDrag(debugOwner: this),
-                      _setUpDismissDrag,
+                      (r) => _setUpDismissDrag(r..gestureSettings = gestureSettings),
                     ),
                   TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
                     () => TapGestureRecognizer(debugOwner: this),
-                    (r) => r.onTapUp = _onTapUp,
+                    (r) => r
+                      ..gestureSettings = gestureSettings
+                      ..onTapUp = _onTapUp,
                   ),
                 },
                 child: AnimatedBuilder(
